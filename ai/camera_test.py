@@ -1,91 +1,195 @@
 import cv2
 import mediapipe as mp
 import math
+import os
 import time
-from collections import deque
 
 
 # ============================================================
-#                 PLAYSAFE AI
-#          SPORTS MOVEMENT SCREENING
-# ============================================================
+# PLAYSAFE AI
+# FULL BODY MOVEMENT SCREENING
 #
-# MediaPipe Pose Landmarker
-#
-# Detects:
-#   - Shoulders
-#   - Elbows
-#   - Wrists
-#   - Hips
-#   - Knees
-#   - Ankles
-#   - Feet
-#
-# Displays:
-#   - Joint angles
-#   - Visibility of body parts
-#   - Movement information
-#   - Caution node
-#   - Caution branch
+# Detects/screens:
+#   - Knee
+#   - Ankle
+#   - Elbow
+#   - Wrist
+#   - Shoulder
+#   - Hip
+#   - Torso
+#   - Fall / sudden movement
 #
 # IMPORTANT:
-# This is a movement-screening prototype.
-# It does NOT medically diagnose injuries.
-#
+# This is a movement-screening system.
+# It does NOT diagnose injuries.
 # ============================================================
 
 
 # ============================================================
-# SETTINGS
+# 1. MODEL PATH
 # ============================================================
 
-MODEL_PATH = r"C:\PLAY SAFE AI\ai\pose_landmarker_full.task"
+MODEL_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "pose_landmarker_full.task"
+)
 
-CAMERA_INDEX = 0
-
-# Landmark must have at least this visibility
-# to be considered reliable.
-VISIBILITY_THRESHOLD = 0.60
-
-# Number of previous values stored
-HISTORY_LENGTH = 15
-
-# Number of consecutive abnormal frames required
-WARNING_FRAMES_REQUIRED = 5
+if not os.path.exists(MODEL_PATH):
+    print("\nERROR: pose_landmarker_full.task was not found.")
+    print("Expected location:")
+    print(MODEL_PATH)
+    print("\nPut pose_landmarker_full.task inside the ai folder.")
+    exit()
 
 
 # ============================================================
-# MEDIAPIPE TASKS API
+# 2. MEDIAPIPE TASKS SETUP
 # ============================================================
 
 BaseOptions = mp.tasks.BaseOptions
-
 PoseLandmarker = mp.tasks.vision.PoseLandmarker
-
 PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-
 VisionRunningMode = mp.tasks.vision.RunningMode
 
 
+options = PoseLandmarkerOptions(
+    base_options=BaseOptions(
+        model_asset_path=MODEL_PATH
+    ),
+    running_mode=VisionRunningMode.VIDEO,
+    num_poses=1,
+    min_pose_detection_confidence=0.5,
+    min_pose_presence_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+
+
 # ============================================================
-# HELPER FUNCTIONS
+# 3. MEDIAPIPE LANDMARK NUMBERS
 # ============================================================
 
-def calculate_angle(a, b, c):
+NOSE = 0
+
+LEFT_EYE = 2
+RIGHT_EYE = 5
+
+LEFT_EAR = 7
+RIGHT_EAR = 8
+
+LEFT_SHOULDER = 11
+RIGHT_SHOULDER = 12
+
+LEFT_ELBOW = 13
+RIGHT_ELBOW = 14
+
+LEFT_WRIST = 15
+RIGHT_WRIST = 16
+
+LEFT_HIP = 23
+RIGHT_HIP = 24
+
+LEFT_KNEE = 25
+RIGHT_KNEE = 26
+
+LEFT_ANKLE = 27
+RIGHT_ANKLE = 28
+
+LEFT_HEEL = 29
+RIGHT_HEEL = 30
+
+LEFT_FOOT_INDEX = 31
+RIGHT_FOOT_INDEX = 32
+
+
+# ============================================================
+# 4. SETTINGS
+# ============================================================
+
+VISIBILITY_THRESHOLD = 0.50
+
+# Angle thresholds are screening thresholds.
+# They are NOT medical injury thresholds.
+
+KNEE_CAUTION_ANGLE = 70
+
+ELBOW_CAUTION_ANGLE = 25
+
+ANKLE_LOW_ANGLE = 45
+ANKLE_HIGH_ANGLE = 140
+
+SHOULDER_LOW_ANGLE = 20
+
+HIP_LOW_ANGLE = 35
+
+TORSO_LEAN_THRESHOLD = 35
+
+# Fall detection sensitivity.
+FALL_VERTICAL_CHANGE = 0.18
+FALL_HORIZONTAL_BODY_ANGLE = 55
+
+
+# ============================================================
+# 5. HELPER FUNCTIONS
+# ============================================================
+
+def landmark_visible(
+    landmark,
+    threshold=VISIBILITY_THRESHOLD
+):
+    """
+    Checks whether MediaPipe considers a landmark
+    reliable enough to use.
+    """
+
+    if landmark is None:
+        return False
+
+    try:
+        return landmark.visibility >= threshold
+
+    except Exception:
+        return False
+
+
+def get_landmark(
+    pose,
+    index
+):
+    """
+    Safely retrieves a landmark.
+    """
+
+    if pose is None:
+        return None
+
+    if index < 0 or index >= len(pose):
+        return None
+
+    return pose[index]
+
+
+def calculate_angle(
+    a,
+    b,
+    c
+):
     """
     Calculates angle ABC.
-
-    a = first point
-    b = middle/joint point
-    c = third point
-
-    Returns angle in degrees.
     """
 
+    if a is None or b is None or c is None:
+        return None
+
     angle = math.degrees(
-        math.atan2(c[1] - b[1], c[0] - b[0])
+        math.atan2(
+            c.y - b.y,
+            c.x - b.x
+        )
         -
-        math.atan2(a[1] - b[1], a[0] - b[0])
+        math.atan2(
+            a.y - b.y,
+            a.x - b.x
+        )
     )
 
     angle = abs(angle)
@@ -96,60 +200,59 @@ def calculate_angle(a, b, c):
     return angle
 
 
-def distance(a, b):
+def point_on_screen(
+    landmark,
+    width,
+    height
+):
     """
-    Distance between two normalized points.
+    Converts MediaPipe normalized coordinates
+    to camera coordinates.
     """
 
-    return math.sqrt(
-        (a[0] - b[0]) ** 2 +
-        (a[1] - b[1]) ** 2
+    x = int(
+        landmark.x * width
     )
 
-
-def get_point(landmark):
-    """
-    Convert MediaPipe landmark into x,y.
-    """
-
-    return (
-        landmark.x,
-        landmark.y
+    y = int(
+        landmark.y * height
     )
 
+    return x, y
 
-def is_visible(landmark, threshold=VISIBILITY_THRESHOLD):
+
+def midpoint(
+    a,
+    b
+):
     """
-    Checks whether MediaPipe considers the landmark visible.
-    """
-
-    try:
-        return landmark.visibility >= threshold
-    except:
-        return False
-
-
-def all_visible(*landmarks):
-    """
-    Returns True only when every landmark is visible.
+    Returns midpoint of two landmarks.
     """
 
-    return all(
-        is_visible(lm)
-        for lm in landmarks
-    )
+    if a is None or b is None:
+        return None
+
+    class Point:
+        pass
+
+    p = Point()
+
+    p.x = (a.x + b.x) / 2
+    p.y = (a.y + b.y) / 2
+
+    return p
 
 
-def draw_text(
+def put_text(
     frame,
     text,
     x,
     y,
-    scale=0.50,
-    thickness=1
+    color=(255, 255, 255),
+    size=0.60
 ):
     """
-    Draw standard white text.
+    Draws readable text.
     """
 
     cv2.putText(
@@ -157,237 +260,444 @@ def draw_text(
         text,
         (x, y),
         cv2.FONT_HERSHEY_SIMPLEX,
-        scale,
-        (255, 255, 255),
-        thickness,
+        size,
+        color,
+        2,
         cv2.LINE_AA
     )
 
 
-def draw_node(
-    frame,
-    landmark,
-    width,
-    height,
-    highlighted=False
-):
-    """
-    Draw a joint/node.
-    """
-
-    if not is_visible(landmark):
-        return
-
-    x = int(landmark.x * width)
-    y = int(landmark.y * height)
-
-    if highlighted:
-
-        # Outer circle
-        cv2.circle(
-            frame,
-            (x, y),
-            13,
-            (0, 0, 255),
-            3
-        )
-
-        # Inner circle
-        cv2.circle(
-            frame,
-            (x, y),
-            7,
-            (0, 0, 255),
-            -1
-        )
-
-    else:
-
-        cv2.circle(
-            frame,
-            (x, y),
-            5,
-            (255, 255, 255),
-            -1
-        )
-
+# ============================================================
+# 6. DRAWING FUNCTIONS
+# ============================================================
 
 def draw_branch(
     frame,
-    lm1,
-    lm2,
+    pose,
+    point1_index,
+    point2_index,
     width,
     height,
-    highlighted=False
+    concerning=False
 ):
     """
-    Draw body branch.
+    Draws a body branch.
+
+    GREEN = normal/reliably tracked
+    RED   = potentially concerning movement
     """
 
-    if not all_visible(lm1, lm2):
+    p1 = get_landmark(
+        pose,
+        point1_index
+    )
+
+    p2 = get_landmark(
+        pose,
+        point2_index
+    )
+
+    if p1 is None or p2 is None:
         return
 
-    x1 = int(lm1.x * width)
-    y1 = int(lm1.y * height)
+    if not landmark_visible(p1):
+        return
 
-    x2 = int(lm2.x * width)
-    y2 = int(lm2.y * height)
+    if not landmark_visible(p2):
+        return
 
-    if highlighted:
+    point1 = point_on_screen(
+        p1,
+        width,
+        height
+    )
 
-        # Red caution branch
-        cv2.line(
-            frame,
-            (x1, y1),
-            (x2, y2),
-            (0, 0, 255),
-            6
-        )
+    point2 = point_on_screen(
+        p2,
+        width,
+        height
+    )
+
+    if concerning:
+
+        color = (0, 0, 255)
+        thickness = 7
 
     else:
 
-        cv2.line(
+        color = (0, 255, 0)
+        thickness = 4
+
+    cv2.line(
+        frame,
+        point1,
+        point2,
+        color,
+        thickness
+    )
+
+
+def draw_joint(
+    frame,
+    pose,
+    index,
+    width,
+    height,
+    concerning=False
+):
+    """
+    Draws an individual joint.
+    """
+
+    landmark = get_landmark(
+        pose,
+        index
+    )
+
+    if landmark is None:
+        return
+
+    if not landmark_visible(landmark):
+        return
+
+    x, y = point_on_screen(
+        landmark,
+        width,
+        height
+    )
+
+    if concerning:
+
+        color = (0, 0, 255)
+        radius = 9
+
+    else:
+
+        color = (0, 255, 0)
+        radius = 6
+
+    cv2.circle(
+        frame,
+        (x, y),
+        radius,
+        color,
+        -1
+    )
+
+
+# ============================================================
+# 7. DRAW COMPLETE BODY
+# ============================================================
+
+def draw_body(
+    frame,
+    pose,
+    width,
+    height,
+    warnings
+):
+    """
+    Draws the entire skeleton.
+
+    Only the relevant concerning branch becomes red.
+    """
+
+    connections = [
+
+        # --------------------------
+        # LEFT ARM
+        # --------------------------
+
+        (
+            LEFT_SHOULDER,
+            LEFT_ELBOW,
+            warnings["left_elbow"]
+        ),
+
+        (
+            LEFT_ELBOW,
+            LEFT_WRIST,
+            warnings["left_elbow"]
+        ),
+
+        # --------------------------
+        # RIGHT ARM
+        # --------------------------
+
+        (
+            RIGHT_SHOULDER,
+            RIGHT_ELBOW,
+            warnings["right_elbow"]
+        ),
+
+        (
+            RIGHT_ELBOW,
+            RIGHT_WRIST,
+            warnings["right_elbow"]
+        ),
+
+        # --------------------------
+        # SHOULDERS
+        # --------------------------
+
+        (
+            LEFT_SHOULDER,
+            RIGHT_SHOULDER,
+            warnings["shoulder"]
+        ),
+
+        # --------------------------
+        # LEFT TORSO
+        # --------------------------
+
+        (
+            LEFT_SHOULDER,
+            LEFT_HIP,
+            warnings["torso"]
+        ),
+
+        # --------------------------
+        # RIGHT TORSO
+        # --------------------------
+
+        (
+            RIGHT_SHOULDER,
+            RIGHT_HIP,
+            warnings["torso"]
+        ),
+
+        # --------------------------
+        # HIPS
+        # --------------------------
+
+        (
+            LEFT_HIP,
+            RIGHT_HIP,
+            warnings["hip"]
+        ),
+
+        # --------------------------
+        # LEFT LEG
+        # --------------------------
+
+        (
+            LEFT_HIP,
+            LEFT_KNEE,
+            warnings["left_knee"]
+        ),
+
+        (
+            LEFT_KNEE,
+            LEFT_ANKLE,
+            warnings["left_knee"]
+        ),
+
+        (
+            LEFT_ANKLE,
+            LEFT_HEEL,
+            warnings["left_ankle"]
+        ),
+
+        (
+            LEFT_HEEL,
+            LEFT_FOOT_INDEX,
+            warnings["left_ankle"]
+        ),
+
+        # --------------------------
+        # RIGHT LEG
+        # --------------------------
+
+        (
+            RIGHT_HIP,
+            RIGHT_KNEE,
+            warnings["right_knee"]
+        ),
+
+        (
+            RIGHT_KNEE,
+            RIGHT_ANKLE,
+            warnings["right_knee"]
+        ),
+
+        (
+            RIGHT_ANKLE,
+            RIGHT_HEEL,
+            warnings["right_ankle"]
+        ),
+
+        (
+            RIGHT_HEEL,
+            RIGHT_FOOT_INDEX,
+            warnings["right_ankle"]
+        )
+    ]
+
+
+    # Draw branches
+
+    for p1, p2, warning in connections:
+
+        draw_branch(
             frame,
-            (x1, y1),
-            (x2, y2),
-            (255, 255, 255),
-            2
+            pose,
+            p1,
+            p2,
+            width,
+            height,
+            warning
         )
 
 
-def angle_text(angle):
-    """
-    Convert angle to display text.
-    """
+    # ========================================================
+    # DRAW JOINTS
+    # ========================================================
 
-    if angle is None:
-        return "NOT SHOWN IN VIDEO"
+    joints = [
 
-    return f"{angle:.0f} deg"
+        # Left side
+
+        (
+            LEFT_SHOULDER,
+            warnings["shoulder"]
+        ),
+
+        (
+            LEFT_ELBOW,
+            warnings["left_elbow"]
+        ),
+
+        (
+            LEFT_WRIST,
+            warnings["left_wrist"]
+        ),
+
+        (
+            LEFT_HIP,
+            warnings["hip"]
+        ),
+
+        (
+            LEFT_KNEE,
+            warnings["left_knee"]
+        ),
+
+        (
+            LEFT_ANKLE,
+            warnings["left_ankle"]
+        ),
+
+        # Right side
+
+        (
+            RIGHT_SHOULDER,
+            warnings["shoulder"]
+        ),
+
+        (
+            RIGHT_ELBOW,
+            warnings["right_elbow"]
+        ),
+
+        (
+            RIGHT_WRIST,
+            warnings["right_wrist"]
+        ),
+
+        (
+            RIGHT_HIP,
+            warnings["hip"]
+        ),
+
+        (
+            RIGHT_KNEE,
+            warnings["right_knee"]
+        ),
+
+        (
+            RIGHT_ANKLE,
+            warnings["right_ankle"]
+        )
+    ]
+
+
+    for index, warning in joints:
+
+        draw_joint(
+            frame,
+            pose,
+            index,
+            width,
+            height,
+            warning
+        )
 
 
 # ============================================================
-# MEDIAPIPE CONFIGURATION
+# 8. CAMERA
 # ============================================================
 
-options = PoseLandmarkerOptions(
-
-    base_options=BaseOptions(
-        model_asset_path=MODEL_PATH
-    ),
-
-    running_mode=VisionRunningMode.VIDEO,
-
-    num_poses=1,
-
-    min_pose_detection_confidence=0.5,
-
-    min_pose_presence_confidence=0.5,
-
-    min_tracking_confidence=0.5
-)
-
-
-# ============================================================
-# CAMERA
-# ============================================================
-
-cap = cv2.VideoCapture(CAMERA_INDEX)
+cap = cv2.VideoCapture(0)
 
 if not cap.isOpened():
 
-    print("")
-    print("ERROR: Could not open camera.")
-    print("Check that your webcam is available.")
+    print("\nERROR: Could not open camera.")
+    print("Check if another program is using the webcam.")
+
     exit()
 
 
-print("")
-print("============================================")
-print("             PLAYSAFE AI")
-print("        MOVEMENT SCREENING SYSTEM")
-print("============================================")
-print("")
-print("Camera started.")
-print("Press Q to quit.")
-print("")
+# Request 1280x720.
 
-
-# ============================================================
-# HISTORY
-# ============================================================
-
-left_knee_history = deque(
-    maxlen=HISTORY_LENGTH
+cap.set(
+    cv2.CAP_PROP_FRAME_WIDTH,
+    1280
 )
 
-right_knee_history = deque(
-    maxlen=HISTORY_LENGTH
-)
-
-left_elbow_history = deque(
-    maxlen=HISTORY_LENGTH
-)
-
-right_elbow_history = deque(
-    maxlen=HISTORY_LENGTH
-)
-
-left_ankle_history = deque(
-    maxlen=HISTORY_LENGTH
-)
-
-right_ankle_history = deque(
-    maxlen=HISTORY_LENGTH
-)
-
-left_wrist_history = deque(
-    maxlen=HISTORY_LENGTH
-)
-
-right_wrist_history = deque(
-    maxlen=HISTORY_LENGTH
+cap.set(
+    cv2.CAP_PROP_FRAME_HEIGHT,
+    720
 )
 
 
 # ============================================================
-# WARNING COUNTERS
+# 9. LARGE WINDOW
 # ============================================================
 
-left_knee_warning_count = 0
-right_knee_warning_count = 0
+WINDOW_NAME = "PlaySafe AI"
 
-left_elbow_warning_count = 0
-right_elbow_warning_count = 0
+cv2.namedWindow(
+    WINDOW_NAME,
+    cv2.WINDOW_NORMAL
+)
 
-left_ankle_warning_count = 0
-right_ankle_warning_count = 0
-
-fall_warning_count = 0
+cv2.resizeWindow(
+    WINDOW_NAME,
+    1280,
+    720
+)
 
 
 # ============================================================
-# PREVIOUS POSITIONS
+# 10. FALL DETECTION MEMORY
 # ============================================================
 
-previous_left_wrist = None
-previous_right_wrist = None
+previous_body_y = None
 
 previous_time = time.time()
 
+fall_cooldown = 0
 
-# ============================================================
-# START TIME
-# ============================================================
-
-start_time = time.time()
+FALL_COOLDOWN_FRAMES = 60
 
 
 # ============================================================
-# POSE LANDMARKER
+# 11. MEDIAPIPE
 # ============================================================
 
 with PoseLandmarker.create_from_options(options) as landmarker:
+
+    frame_timestamp_ms = 0
 
     while True:
 
@@ -399,11 +709,15 @@ with PoseLandmarker.create_from_options(options) as landmarker:
 
         if not success:
 
-            print("ERROR: Could not read camera frame.")
+            print("Could not read camera frame.")
+
             break
 
 
-        # Mirror webcam
+        # ====================================================
+        # MIRROR CAMERA
+        # ====================================================
+
         frame = cv2.flip(
             frame,
             1
@@ -414,7 +728,7 @@ with PoseLandmarker.create_from_options(options) as landmarker:
 
 
         # ====================================================
-        # CONVERT TO RGB
+        # RGB
         # ====================================================
 
         rgb_frame = cv2.cvtColor(
@@ -422,6 +736,10 @@ with PoseLandmarker.create_from_options(options) as landmarker:
             cv2.COLOR_BGR2RGB
         )
 
+
+        # ====================================================
+        # MEDIAPIPE IMAGE
+        # ====================================================
 
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB,
@@ -433,1664 +751,1132 @@ with PoseLandmarker.create_from_options(options) as landmarker:
         # TIMESTAMP
         # ====================================================
 
-        timestamp_ms = int(
-            (time.time() - start_time) * 1000
-        )
+        frame_timestamp_ms += 33
 
 
         # ====================================================
-        # DETECT POSE
+        # POSE DETECTION
         # ====================================================
 
         result = landmarker.detect_for_video(
             mp_image,
-            timestamp_ms
+            frame_timestamp_ms
         )
 
 
         # ====================================================
-        # DEFAULT VALUES
+        # DEFAULT STATUS
         # ====================================================
 
-        status = "NO PERSON DETECTED"
+        body_status = "BODY: NOT SHOWN"
 
-        caution_node = "NONE"
+        left_knee_status = "LEFT KNEE: NOT SHOWN"
+        right_knee_status = "RIGHT KNEE: NOT SHOWN"
 
-        caution_branch = "NONE"
+        left_ankle_status = "LEFT ANKLE: NOT SHOWN"
+        right_ankle_status = "RIGHT ANKLE: NOT SHOWN"
 
-        caution_message = ""
+        left_elbow_status = "LEFT ELBOW: NOT SHOWN"
+        right_elbow_status = "RIGHT ELBOW: NOT SHOWN"
+
+        left_wrist_status = "LEFT WRIST: NOT SHOWN"
+        right_wrist_status = "RIGHT WRIST: NOT SHOWN"
+
+        shoulder_status = "SHOULDER: NOT SHOWN"
+
+        hip_status = "HIP: NOT SHOWN"
+
+        torso_status = "TORSO: NOT SHOWN"
+
+        fall_status = ""
+
+        # ====================================================
+        # WARNING FLAGS
+        # ====================================================
+
+        warnings = {
+
+            "left_knee": False,
+            "right_knee": False,
+
+            "left_ankle": False,
+            "right_ankle": False,
+
+            "left_elbow": False,
+            "right_elbow": False,
+
+            "left_wrist": False,
+            "right_wrist": False,
+
+            "shoulder": False,
+
+            "hip": False,
+
+            "torso": False,
+
+            "fall": False
+        }
 
 
         # ====================================================
-        # PERSON DETECTED
+        # PERSON FOUND
         # ====================================================
 
         if result.pose_landmarks:
 
-            landmarks = result.pose_landmarks[0]
+            pose = result.pose_landmarks[0]
+
+            body_status = "BODY: DETECTED"
 
 
             # =================================================
-            # BODY LANDMARKS
+            # GET LANDMARKS
             # =================================================
 
-            nose = landmarks[0]
-
-            left_shoulder = landmarks[11]
-            right_shoulder = landmarks[12]
-
-            left_elbow = landmarks[13]
-            right_elbow = landmarks[14]
-
-            left_wrist = landmarks[15]
-            right_wrist = landmarks[16]
-
-            left_hip = landmarks[23]
-            right_hip = landmarks[24]
-
-            left_knee = landmarks[25]
-            right_knee = landmarks[26]
-
-            left_ankle = landmarks[27]
-            right_ankle = landmarks[28]
-
-            left_foot = landmarks[31]
-            right_foot = landmarks[32]
-
-
-            # =================================================
-            # DETERMINE VISIBILITY
-            # =================================================
-
-            left_arm_visible = all_visible(
-                left_shoulder,
-                left_elbow,
-                left_wrist
+            nose = get_landmark(
+                pose,
+                NOSE
             )
 
-            right_arm_visible = all_visible(
-                right_shoulder,
-                right_elbow,
-                right_wrist
+            left_shoulder = get_landmark(
+                pose,
+                LEFT_SHOULDER
             )
 
-
-            # -------------------------------------------------
-            # IMPORTANT KNEE BUG FIX
-            # -------------------------------------------------
-            #
-            # Knee is ONLY analyzed if:
-            #
-            # HIP + KNEE + ANKLE
-            #
-            # are all visible.
-            #
-            # Therefore upper-body-only video will not
-            # randomly trigger a knee warning.
-            # -------------------------------------------------
-
-            left_leg_visible = all_visible(
-                left_hip,
-                left_knee,
-                left_ankle
+            right_shoulder = get_landmark(
+                pose,
+                RIGHT_SHOULDER
             )
 
-            right_leg_visible = all_visible(
-                right_hip,
-                right_knee,
-                right_ankle
+            left_elbow = get_landmark(
+                pose,
+                LEFT_ELBOW
             )
 
-
-            left_ankle_angle_visible = all_visible(
-                left_knee,
-                left_ankle,
-                left_foot
+            right_elbow = get_landmark(
+                pose,
+                RIGHT_ELBOW
             )
 
-            right_ankle_angle_visible = all_visible(
-                right_knee,
-                right_ankle,
-                right_foot
+            left_wrist = get_landmark(
+                pose,
+                LEFT_WRIST
             )
 
-
-            # =================================================
-            # DRAW BODY BRANCHES
-            # =================================================
-
-            # Shoulders
-            draw_branch(
-                frame,
-                left_shoulder,
-                right_shoulder,
-                width,
-                height
+            right_wrist = get_landmark(
+                pose,
+                RIGHT_WRIST
             )
 
-            # Left arm
-            draw_branch(
-                frame,
-                left_shoulder,
-                left_elbow,
-                width,
-                height
+            left_hip = get_landmark(
+                pose,
+                LEFT_HIP
             )
 
-            draw_branch(
-                frame,
-                left_elbow,
-                left_wrist,
-                width,
-                height
+            right_hip = get_landmark(
+                pose,
+                RIGHT_HIP
             )
 
-            # Right arm
-            draw_branch(
-                frame,
-                right_shoulder,
-                right_elbow,
-                width,
-                height
+            left_knee = get_landmark(
+                pose,
+                LEFT_KNEE
             )
 
-            draw_branch(
-                frame,
-                right_elbow,
-                right_wrist,
-                width,
-                height
+            right_knee = get_landmark(
+                pose,
+                RIGHT_KNEE
             )
 
-            # Torso
-            draw_branch(
-                frame,
-                left_shoulder,
-                left_hip,
-                width,
-                height
+            left_ankle = get_landmark(
+                pose,
+                LEFT_ANKLE
             )
 
-            draw_branch(
-                frame,
-                right_shoulder,
-                right_hip,
-                width,
-                height
+            right_ankle = get_landmark(
+                pose,
+                RIGHT_ANKLE
+
             )
 
-            draw_branch(
-                frame,
-                left_hip,
-                right_hip,
-                width,
-                height
+            left_heel = get_landmark(
+                pose,
+                LEFT_HEEL
             )
 
-            # Left leg
-            draw_branch(
-                frame,
-                left_hip,
-                left_knee,
-                width,
-                height
+            right_heel = get_landmark(
+                pose,
+                RIGHT_HEEL
             )
 
-            draw_branch(
-                frame,
-                left_knee,
-                left_ankle,
-                width,
-                height
+            left_foot = get_landmark(
+                pose,
+                LEFT_FOOT_INDEX
             )
 
-            # Right leg
-            draw_branch(
-                frame,
-                right_hip,
-                right_knee,
-                width,
-                height
-            )
-
-            draw_branch(
-                frame,
-                right_knee,
-                right_ankle,
-                width,
-                height
-            )
-
-
-            # Feet
-            draw_branch(
-                frame,
-                left_ankle,
-                left_foot,
-                width,
-                height
-            )
-
-            draw_branch(
-                frame,
-                right_ankle,
-                right_foot,
-                width,
-                height
+            right_foot = get_landmark(
+                pose,
+                RIGHT_FOOT_INDEX
             )
 
 
             # =================================================
-            # KNEE ANGLES
+            # SHOULDER
             # =================================================
 
-            left_knee_angle = None
-            right_knee_angle = None
+            shoulders_visible = (
+
+                landmark_visible(left_shoulder)
+
+                and
+
+                landmark_visible(right_shoulder)
+            )
 
 
-            if left_leg_visible:
+            if shoulders_visible:
 
-                left_knee_angle = calculate_angle(
-                    get_point(left_hip),
-                    get_point(left_knee),
-                    get_point(left_ankle)
+                shoulder_status = "SHOULDER: SHOWN"
+
+
+            # =================================================
+            # HIP
+            # =================================================
+
+            hips_visible = (
+
+                landmark_visible(left_hip)
+
+                and
+
+                landmark_visible(right_hip)
+            )
+
+
+            if hips_visible:
+
+                hip_status = "HIP: SHOWN"
+
+
+            # =================================================
+            # LEFT KNEE
+            # =================================================
+
+            left_knee_reliable = (
+
+                landmark_visible(left_hip)
+
+                and
+
+                landmark_visible(left_knee)
+
+                and
+
+                landmark_visible(left_ankle)
+            )
+
+
+            if left_knee_reliable:
+
+                angle = calculate_angle(
+                    left_hip,
+                    left_knee,
+                    left_ankle
                 )
 
-                left_knee_history.append(
-                    left_knee_angle
-                )
 
-            else:
+                if angle is not None:
 
-                left_knee_history.clear()
-
-                left_knee_warning_count = 0
+                    left_knee_status = (
+                        f"LEFT KNEE: {int(angle)} deg"
+                    )
 
 
-            if right_leg_visible:
+                    if angle < KNEE_CAUTION_ANGLE:
 
-                right_knee_angle = calculate_angle(
-                    get_point(right_hip),
-                    get_point(right_knee),
-                    get_point(right_ankle)
-                )
-
-                right_knee_history.append(
-                    right_knee_angle
-                )
-
-            else:
-
-                right_knee_history.clear()
-
-                right_knee_warning_count = 0
+                        warnings["left_knee"] = True
 
 
             # =================================================
-            # ELBOW ANGLES
+            # RIGHT KNEE
             # =================================================
 
-            left_elbow_angle = None
-            right_elbow_angle = None
+            right_knee_reliable = (
+
+                landmark_visible(right_hip)
+
+                and
+
+                landmark_visible(right_knee)
+
+                and
+
+                landmark_visible(right_ankle)
+            )
 
 
-            if left_arm_visible:
+            if right_knee_reliable:
 
-                left_elbow_angle = calculate_angle(
-                    get_point(left_shoulder),
-                    get_point(left_elbow),
-                    get_point(left_wrist)
+                angle = calculate_angle(
+                    right_hip,
+                    right_knee,
+                    right_ankle
                 )
 
-                left_elbow_history.append(
-                    left_elbow_angle
-                )
 
-            else:
+                if angle is not None:
 
-                left_elbow_history.clear()
+                    right_knee_status = (
+                        f"RIGHT KNEE: {int(angle)} deg"
+                    )
 
 
-            if right_arm_visible:
+                    if angle < KNEE_CAUTION_ANGLE:
 
-                right_elbow_angle = calculate_angle(
-                    get_point(right_shoulder),
-                    get_point(right_elbow),
-                    get_point(right_wrist)
-                )
-
-                right_elbow_history.append(
-                    right_elbow_angle
-                )
-
-            else:
-
-                right_elbow_history.clear()
+                        warnings["right_knee"] = True
 
 
             # =================================================
-            # ANKLE ANGLES
+            # LEFT ANKLE
             # =================================================
 
-            left_ankle_angle = None
-            right_ankle_angle = None
+            left_ankle_reliable = (
+
+                landmark_visible(left_knee)
+
+                and
+
+                landmark_visible(left_ankle)
+
+                and
+
+                (
+                    landmark_visible(left_foot)
+                    or
+                    landmark_visible(left_heel)
+                )
+            )
 
 
-            if left_ankle_angle_visible:
+            if left_ankle_reliable:
 
-                left_ankle_angle = calculate_angle(
-                    get_point(left_knee),
-                    get_point(left_ankle),
-                    get_point(left_foot)
+                left_ankle_status = (
+                    "LEFT ANKLE: SHOWN"
                 )
 
-                left_ankle_history.append(
-                    left_ankle_angle
-                )
 
-            else:
+                if (
+                    landmark_visible(left_knee)
+                    and
+                    landmark_visible(left_ankle)
+                    and
+                    landmark_visible(left_foot)
+                ):
 
-                left_ankle_history.clear()
+                    ankle_angle = calculate_angle(
+                        left_knee,
+                        left_ankle,
+                        left_foot
+                    )
 
 
-            if right_ankle_angle_visible:
+                    if ankle_angle is not None:
 
-                right_ankle_angle = calculate_angle(
-                    get_point(right_knee),
-                    get_point(right_ankle),
-                    get_point(right_foot)
-                )
+                        if (
+                            ankle_angle < ANKLE_LOW_ANGLE
+                            or
+                            ankle_angle > ANKLE_HIGH_ANGLE
+                        ):
 
-                right_ankle_history.append(
-                    right_ankle_angle
-                )
-
-            else:
-
-                right_ankle_history.clear()
+                            warnings["left_ankle"] = True
 
 
             # =================================================
-            # WRIST MOVEMENT
+            # RIGHT ANKLE
             # =================================================
 
-            current_time = time.time()
+            right_ankle_reliable = (
 
-            dt = current_time - previous_time
+                landmark_visible(right_knee)
 
-            if dt <= 0:
-                dt = 0.001
+                and
+
+                landmark_visible(right_ankle)
+
+                and
+
+                (
+                    landmark_visible(right_foot)
+                    or
+                    landmark_visible(right_heel)
+                )
+            )
 
 
-            left_wrist_speed = 0
-            right_wrist_speed = 0
+            if right_ankle_reliable:
+
+                right_ankle_status = (
+                    "RIGHT ANKLE: SHOWN"
+                )
 
 
-            # LEFT WRIST
-            if is_visible(left_wrist):
+                if (
+                    landmark_visible(right_knee)
+                    and
+                    landmark_visible(right_ankle)
+                    and
+                    landmark_visible(right_foot)
+                ):
 
-                current_left_wrist = get_point(
+                    ankle_angle = calculate_angle(
+                        right_knee,
+                        right_ankle,
+                        right_foot
+                    )
+
+
+                    if ankle_angle is not None:
+
+                        if (
+                            ankle_angle < ANKLE_LOW_ANGLE
+                            or
+                            ankle_angle > ANKLE_HIGH_ANGLE
+                        ):
+
+                            warnings["right_ankle"] = True
+
+
+            # =================================================
+            # LEFT ELBOW
+            # =================================================
+
+            left_elbow_reliable = (
+
+                landmark_visible(left_shoulder)
+
+                and
+
+                landmark_visible(left_elbow)
+
+                and
+
+                landmark_visible(left_wrist)
+            )
+
+
+            if left_elbow_reliable:
+
+                elbow_angle = calculate_angle(
+                    left_shoulder,
+                    left_elbow,
                     left_wrist
                 )
 
-                left_wrist_history.append(
-                    current_left_wrist
-                )
 
+                if elbow_angle is not None:
 
-                if previous_left_wrist is not None:
-
-                    left_wrist_speed = (
-                        distance(
-                            current_left_wrist,
-                            previous_left_wrist
-                        )
-                        /
-                        dt
+                    left_elbow_status = (
+                        f"LEFT ELBOW: "
+                        f"{int(elbow_angle)} deg"
                     )
 
 
-                previous_left_wrist = (
-                    current_left_wrist
-                )
+                    if elbow_angle < ELBOW_CAUTION_ANGLE:
 
-            else:
-
-                left_wrist_history.clear()
-
-                previous_left_wrist = None
+                        warnings["left_elbow"] = True
 
 
-            # RIGHT WRIST
-            if is_visible(right_wrist):
+            # =================================================
+            # RIGHT ELBOW
+            # =================================================
 
-                current_right_wrist = get_point(
+            right_elbow_reliable = (
+
+                landmark_visible(right_shoulder)
+
+                and
+
+                landmark_visible(right_elbow)
+
+                and
+
+                landmark_visible(right_wrist)
+            )
+
+
+            if right_elbow_reliable:
+
+                elbow_angle = calculate_angle(
+                    right_shoulder,
+                    right_elbow,
                     right_wrist
                 )
 
-                right_wrist_history.append(
-                    current_right_wrist
-                )
 
+                if elbow_angle is not None:
 
-                if previous_right_wrist is not None:
-
-                    right_wrist_speed = (
-                        distance(
-                            current_right_wrist,
-                            previous_right_wrist
-                        )
-                        /
-                        dt
+                    right_elbow_status = (
+                        f"RIGHT ELBOW: "
+                        f"{int(elbow_angle)} deg"
                     )
 
 
-                previous_right_wrist = (
-                    current_right_wrist
-                )
+                    if elbow_angle < ELBOW_CAUTION_ANGLE:
 
-            else:
-
-                right_wrist_history.clear()
-
-                previous_right_wrist = None
-
-
-            previous_time = current_time
+                        warnings["right_elbow"] = True
 
 
             # =================================================
-            # KNEE CAUTION ANALYSIS
+            # LEFT WRIST
             # =================================================
 
-            left_knee_abnormal = False
-            right_knee_abnormal = False
+            left_wrist_reliable = (
 
+                landmark_visible(left_elbow)
 
-            # Need multiple frames
-            if (
-                left_leg_visible
                 and
-                len(left_knee_history) >= 5
-            ):
 
-                recent_values = list(
-                    left_knee_history
-                )[-5:]
+                landmark_visible(left_wrist)
+            )
 
 
-                # Extreme knee flexion
-                if all(
-                    value < 55
-                    for value in recent_values
-                ):
+            if left_wrist_reliable:
 
-                    left_knee_abnormal = True
+                left_wrist_status = (
+                    "LEFT WRIST: SHOWN"
+                )
 
 
-            if (
-                right_leg_visible
+            # =================================================
+            # RIGHT WRIST
+            # =================================================
+
+            right_wrist_reliable = (
+
+                landmark_visible(right_elbow)
+
                 and
-                len(right_knee_history) >= 5
-            ):
 
-                recent_values = list(
-                    right_knee_history
-                )[-5:]
+                landmark_visible(right_wrist)
+            )
 
 
-                if all(
-                    value < 55
-                    for value in recent_values
-                ):
+            if right_wrist_reliable:
 
-                    right_knee_abnormal = True
-
-
-            # =================================================
-            # KNEE COUNTERS
-            # =================================================
-
-            if left_knee_abnormal:
-
-                left_knee_warning_count += 1
-
-            else:
-
-                left_knee_warning_count = 0
-
-
-            if right_knee_abnormal:
-
-                right_knee_warning_count += 1
-
-            else:
-
-                right_knee_warning_count = 0
-
-
-            # =================================================
-            # ELBOW CAUTION
-            # =================================================
-
-            left_elbow_abnormal = False
-            right_elbow_abnormal = False
-
-
-            if (
-                left_elbow_angle is not None
-                and
-                len(left_elbow_history) >= 5
-            ):
-
-                recent = list(
-                    left_elbow_history
-                )[-5:]
-
-
-                if all(
-                    value < 35
-                    for value in recent
-                ):
-
-                    left_elbow_abnormal = True
-
-
-            if (
-                right_elbow_angle is not None
-                and
-                len(right_elbow_history) >= 5
-            ):
-
-                recent = list(
-                    right_elbow_history
-                )[-5:]
-
-
-                if all(
-                    value < 35
-                    for value in recent
-                ):
-
-                    right_elbow_abnormal = True
-
-
-            if left_elbow_abnormal:
-
-                left_elbow_warning_count += 1
-
-            else:
-
-                left_elbow_warning_count = 0
-
-
-            if right_elbow_abnormal:
-
-                right_elbow_warning_count += 1
-
-            else:
-
-                right_elbow_warning_count = 0
-
-
-            # =================================================
-            # ANKLE CAUTION
-            # =================================================
-
-            left_ankle_abnormal = False
-            right_ankle_abnormal = False
-
-
-            if left_ankle_angle is not None:
-
-                if (
-                    left_ankle_angle < 55
-                    or
-                    left_ankle_angle > 160
-                ):
-
-                    left_ankle_abnormal = True
-
-
-            if right_ankle_angle is not None:
-
-                if (
-                    right_ankle_angle < 55
-                    or
-                    right_ankle_angle > 160
-                ):
-
-                    right_ankle_abnormal = True
-
-
-            if left_ankle_abnormal:
-
-                left_ankle_warning_count += 1
-
-            else:
-
-                left_ankle_warning_count = 0
-
-
-            if right_ankle_abnormal:
-
-                right_ankle_warning_count += 1
-
-            else:
-
-                right_ankle_warning_count = 0
-
-
-            # =================================================
-            # FALL / UNUSUAL POSTURE
-            # =================================================
-
-            fall_detected = False
-
-
-            if all_visible(
-                left_shoulder,
-                right_shoulder,
-                left_hip,
-                right_hip
-            ):
-
-                shoulder_x = (
-                    left_shoulder.x +
-                    right_shoulder.x
-                ) / 2
-
-
-                shoulder_y = (
-                    left_shoulder.y +
-                    right_shoulder.y
-                ) / 2
-
-
-                hip_x = (
-                    left_hip.x +
-                    right_hip.x
-                ) / 2
-
-
-                hip_y = (
-                    left_hip.y +
-                    right_hip.y
-                ) / 2
-
-
-                torso_width = abs(
-                    right_shoulder.x -
-                    left_shoulder.x
-                )
-
-
-                torso_height = abs(
-                    hip_y -
-                    shoulder_y
-                )
-
-
-                if (
-                    torso_width > 0
-                    and
-                    torso_height
-                    <
-                    torso_width * 0.55
-                ):
-
-                    fall_detected = True
-
-
-            if fall_detected:
-
-                fall_warning_count += 1
-
-            else:
-
-                fall_warning_count = 0
-
-
-            # =================================================
-            # SELECT MOST IMPORTANT CAUTION
-            # =================================================
-
-            # Knee gets priority
-            if (
-                left_knee_warning_count
-                >= WARNING_FRAMES_REQUIRED
-            ):
-
-                caution_node = "LEFT KNEE (25)"
-
-                caution_branch = (
-                    "LEFT HIP -> LEFT KNEE -> LEFT ANKLE"
-                )
-
-                caution_message = (
-                    "CAUTION: LEFT KNEE MOVEMENT"
-                )
-
-
-            elif (
-                right_knee_warning_count
-                >= WARNING_FRAMES_REQUIRED
-            ):
-
-                caution_node = "RIGHT KNEE (26)"
-
-                caution_branch = (
-                    "RIGHT HIP -> RIGHT KNEE -> RIGHT ANKLE"
-                )
-
-                caution_message = (
-                    "CAUTION: RIGHT KNEE MOVEMENT"
-                )
-
-
-            elif (
-                left_elbow_warning_count
-                >= WARNING_FRAMES_REQUIRED
-            ):
-
-                caution_node = "LEFT ELBOW (13)"
-
-                caution_branch = (
-                    "LEFT SHOULDER -> LEFT ELBOW -> LEFT WRIST"
-                )
-
-                caution_message = (
-                    "CAUTION: LEFT ELBOW MOVEMENT"
-                )
-
-
-            elif (
-                right_elbow_warning_count
-                >= WARNING_FRAMES_REQUIRED
-            ):
-
-                caution_node = "RIGHT ELBOW (14)"
-
-                caution_branch = (
-                    "RIGHT SHOULDER -> RIGHT ELBOW -> RIGHT WRIST"
-                )
-
-                caution_message = (
-                    "CAUTION: RIGHT ELBOW MOVEMENT"
-                )
-
-
-            elif (
-                left_ankle_warning_count
-                >= WARNING_FRAMES_REQUIRED
-            ):
-
-                caution_node = "LEFT ANKLE (27)"
-
-                caution_branch = (
-                    "LEFT KNEE -> LEFT ANKLE -> LEFT FOOT"
-                )
-
-                caution_message = (
-                    "CAUTION: LEFT ANKLE MOVEMENT"
-                )
-
-
-            elif (
-                right_ankle_warning_count
-                >= WARNING_FRAMES_REQUIRED
-            ):
-
-                caution_node = "RIGHT ANKLE (28)"
-
-                caution_branch = (
-                    "RIGHT KNEE -> RIGHT ANKLE -> RIGHT FOOT"
-                )
-
-                caution_message = (
-                    "CAUTION: RIGHT ANKLE MOVEMENT"
-                )
-
-
-            elif (
-                fall_warning_count
-                >= WARNING_FRAMES_REQUIRED
-            ):
-
-                caution_node = "FULL BODY"
-
-                caution_branch = (
-                    "SHOULDER -> HIP"
-                )
-
-                caution_message = (
-                    "CAUTION: UNUSUAL POSTURE / POSSIBLE FALL"
+                right_wrist_status = (
+                    "RIGHT WRIST: SHOWN"
                 )
 
 
             # =================================================
-            # HIGHLIGHT CAUTION BRANCH
+            # SHOULDER SCREENING
             # =================================================
 
-            if "LEFT KNEE" in caution_node:
+            if shoulders_visible:
 
-                draw_branch(
-                    frame,
+                shoulder_angle = calculate_angle(
                     left_hip,
-                    left_knee,
-                    width,
-                    height,
-                    True
-                )
-
-                draw_branch(
-                    frame,
-                    left_knee,
-                    left_ankle,
-                    width,
-                    height,
-                    True
-                )
-
-
-            elif "RIGHT KNEE" in caution_node:
-
-                draw_branch(
-                    frame,
-                    right_hip,
-                    right_knee,
-                    width,
-                    height,
-                    True
-                )
-
-                draw_branch(
-                    frame,
-                    right_knee,
-                    right_ankle,
-                    width,
-                    height,
-                    True
-                )
-
-
-            elif "LEFT ELBOW" in caution_node:
-
-                draw_branch(
-                    frame,
                     left_shoulder,
-                    left_elbow,
-                    width,
-                    height,
-                    True
-                )
-
-                draw_branch(
-                    frame,
-                    left_elbow,
-                    left_wrist,
-                    width,
-                    height,
-                    True
-                )
+                    right_shoulder
+                ) if (
+                    landmark_visible(left_hip)
+                ) else None
 
 
-            elif "RIGHT ELBOW" in caution_node:
+                # Shoulder is primarily reported as shown
+                # unless the geometry is clearly abnormal.
 
-                draw_branch(
-                    frame,
-                    right_shoulder,
-                    right_elbow,
-                    width,
-                    height,
-                    True
-                )
+                if shoulder_angle is not None:
 
-                draw_branch(
-                    frame,
-                    right_elbow,
-                    right_wrist,
-                    width,
-                    height,
-                    True
-                )
+                    if shoulder_angle < SHOULDER_LOW_ANGLE:
 
-
-            elif "LEFT ANKLE" in caution_node:
-
-                draw_branch(
-                    frame,
-                    left_knee,
-                    left_ankle,
-                    width,
-                    height,
-                    True
-                )
-
-                draw_branch(
-                    frame,
-                    left_ankle,
-                    left_foot,
-                    width,
-                    height,
-                    True
-                )
-
-
-            elif "RIGHT ANKLE" in caution_node:
-
-                draw_branch(
-                    frame,
-                    right_knee,
-                    right_ankle,
-                    width,
-                    height,
-                    True
-                )
-
-                draw_branch(
-                    frame,
-                    right_ankle,
-                    right_foot,
-                    width,
-                    height,
-                    True
-                )
+                        warnings["shoulder"] = True
 
 
             # =================================================
-            # DRAW NODES
+            # TORSO SCREENING
             # =================================================
 
-            # Normal nodes first
+            torso_reliable = (
 
-            draw_node(
+                landmark_visible(left_shoulder)
+
+                and
+
+                landmark_visible(right_shoulder)
+
+                and
+
+                landmark_visible(left_hip)
+
+                and
+
+                landmark_visible(right_hip)
+            )
+
+
+            if torso_reliable:
+
+                shoulder_mid = midpoint(
+                    left_shoulder,
+                    right_shoulder
+                )
+
+                hip_mid = midpoint(
+                    left_hip,
+                    right_hip
+                )
+
+
+                torso_status = "TORSO: SHOWN"
+
+
+                if shoulder_mid is not None and hip_mid is not None:
+
+                    dx = (
+                        shoulder_mid.x
+                        -
+                        hip_mid.x
+                    )
+
+                    dy = (
+                        shoulder_mid.y
+                        -
+                        hip_mid.y
+                    )
+
+
+                    torso_angle = abs(
+                        math.degrees(
+                            math.atan2(
+                                dx,
+                                dy
+                            )
+                        )
+                    )
+
+
+                    if (
+                        torso_angle
+                        >
+                        TORSO_LEAN_THRESHOLD
+                    ):
+
+                        warnings["torso"] = True
+
+
+            # =================================================
+            # FALL / SUDDEN BODY MOVEMENT SCREENING
+            # =================================================
+
+            if (
+                landmark_visible(nose)
+                and
+                landmark_visible(left_hip)
+                and
+                landmark_visible(right_hip)
+            ):
+
+                hip_mid = midpoint(
+                    left_hip,
+                    right_hip
+                )
+
+
+                if hip_mid is not None:
+
+                    current_body_y = (
+                        nose.y * 0.4
+                        +
+                        hip_mid.y * 0.6
+                    )
+
+
+                    current_time = time.time()
+
+
+                    if previous_body_y is not None:
+
+                        vertical_change = (
+                            current_body_y
+                            -
+                            previous_body_y
+                        )
+
+
+                        # Detect sudden downward movement.
+
+                        if (
+                            vertical_change
+                            >
+                            FALL_VERTICAL_CHANGE
+                            and
+                            fall_cooldown == 0
+                        ):
+
+                            warnings["fall"] = True
+
+                            fall_status = (
+                                "CAUTION: "
+                                "SUDDEN DOWNWARD MOVEMENT"
+                            )
+
+                            fall_cooldown = (
+                                FALL_COOLDOWN_FRAMES
+                            )
+
+
+                    previous_body_y = current_body_y
+
+
+            if fall_cooldown > 0:
+
+                fall_cooldown -= 1
+
+
+            # =================================================
+            # DRAW BODY
+            # =================================================
+
+            draw_body(
                 frame,
-                left_shoulder,
+                pose,
                 width,
-                height
-            )
-
-            draw_node(
-                frame,
-                right_shoulder,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                left_elbow,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                right_elbow,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                left_wrist,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                right_wrist,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                left_hip,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                right_hip,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                left_knee,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                right_knee,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                left_ankle,
-                width,
-                height
-            )
-
-            draw_node(
-                frame,
-                right_ankle,
-                width,
-                height
-            )
-
-
-            # Highlight caution node
-
-            if "LEFT KNEE" in caution_node:
-
-                draw_node(
-                    frame,
-                    left_knee,
-                    width,
-                    height,
-                    True
-                )
-
-
-            elif "RIGHT KNEE" in caution_node:
-
-                draw_node(
-                    frame,
-                    right_knee,
-                    width,
-                    height,
-                    True
-                )
-
-
-            elif "LEFT ELBOW" in caution_node:
-
-                draw_node(
-                    frame,
-                    left_elbow,
-                    width,
-                    height,
-                    True
-                )
-
-
-            elif "RIGHT ELBOW" in caution_node:
-
-                draw_node(
-                    frame,
-                    right_elbow,
-                    width,
-                    height,
-                    True
-                )
-
-
-            elif "LEFT ANKLE" in caution_node:
-
-                draw_node(
-                    frame,
-                    left_ankle,
-                    width,
-                    height,
-                    True
-                )
-
-
-            elif "RIGHT ANKLE" in caution_node:
-
-                draw_node(
-                    frame,
-                    right_ankle,
-                    width,
-                    height,
-                    True
-                )
-
-
-            # =================================================
-            # STATUS
-            # =================================================
-
-            if caution_message:
-
-                status = "CAUTION"
-
-            else:
-
-                status = "MOVEMENT OK"
-
-
-            # =================================================
-            # INFORMATION PANEL
-            # =================================================
-
-            panel_width = 385
-
-            panel_height = 395
-
-
-            overlay = frame.copy()
-
-
-            cv2.rectangle(
-                overlay,
-                (10, 85),
-                (
-                    panel_width,
-                    85 + panel_height
-                ),
-                (20, 20, 20),
-                -1
-            )
-
-
-            # Slight transparency
-            frame = cv2.addWeighted(
-                overlay,
-                0.80,
-                frame,
-                0.20,
-                0
-            )
-
-
-            # =================================================
-            # PANEL TITLE
-            # =================================================
-
-            draw_text(
-                frame,
-                "BODY ANALYSIS",
-                25,
-                112,
-                0.70,
-                2
-            )
-
-
-            # =================================================
-            # KNEES
-            # =================================================
-
-            draw_text(
-                frame,
-                "LEFT KNEE:",
-                25,
-                145,
-                0.48,
-                1
-            )
-
-
-            if left_knee_angle is None:
-
-                draw_text(
-                    frame,
-                    "NOT SHOWN IN VIDEO",
-                    145,
-                    145,
-                    0.42,
-                    1
-                )
-
-            else:
-
-                draw_text(
-                    frame,
-                    f"{left_knee_angle:.0f} deg",
-                    145,
-                    145,
-                    0.50,
-                    1
-                )
-
-
-            draw_text(
-                frame,
-                "RIGHT KNEE:",
-                25,
-                170,
-                0.48,
-                1
-            )
-
-
-            if right_knee_angle is None:
-
-                draw_text(
-                    frame,
-                    "NOT SHOWN IN VIDEO",
-                    145,
-                    170,
-                    0.42,
-                    1
-                )
-
-            else:
-
-                draw_text(
-                    frame,
-                    f"{right_knee_angle:.0f} deg",
-                    145,
-                    170,
-                    0.50,
-                    1
-                )
-
-
-            # =================================================
-            # ELBOWS
-            # =================================================
-
-            draw_text(
-                frame,
-                "LEFT ELBOW:",
-                25,
-                200,
-                0.48,
-                1
-            )
-
-
-            if left_elbow_angle is None:
-
-                draw_text(
-                    frame,
-                    "NOT SHOWN IN VIDEO",
-                    145,
-                    200,
-                    0.42,
-                    1
-                )
-
-            else:
-
-                draw_text(
-                    frame,
-                    f"{left_elbow_angle:.0f} deg",
-                    145,
-                    200,
-                    0.50,
-                    1
-                )
-
-
-            draw_text(
-                frame,
-                "RIGHT ELBOW:",
-                25,
-                225,
-                0.48,
-                1
-            )
-
-
-            if right_elbow_angle is None:
-
-                draw_text(
-                    frame,
-                    "NOT SHOWN IN VIDEO",
-                    145,
-                    225,
-                    0.42,
-                    1
-                )
-
-            else:
-
-                draw_text(
-                    frame,
-                    f"{right_elbow_angle:.0f} deg",
-                    145,
-                    225,
-                    0.50,
-                    1
-                )
-
-
-            # =================================================
-            # ANKLES
-            # =================================================
-
-            draw_text(
-                frame,
-                "LEFT ANKLE:",
-                25,
-                255,
-                0.48,
-                1
-            )
-
-
-            if left_ankle_angle is None:
-
-                draw_text(
-                    frame,
-                    "NOT SHOWN IN VIDEO",
-                    145,
-                    255,
-                    0.42,
-                    1
-                )
-
-            else:
-
-                draw_text(
-                    frame,
-                    f"{left_ankle_angle:.0f} deg",
-                    145,
-                    255,
-                    0.50,
-                    1
-                )
-
-
-            draw_text(
-                frame,
-                "RIGHT ANKLE:",
-                25,
-                280,
-                0.48,
-                1
-            )
-
-
-            if right_ankle_angle is None:
-
-                draw_text(
-                    frame,
-                    "NOT SHOWN IN VIDEO",
-                    145,
-                    280,
-                    0.42,
-                    1
-                )
-
-            else:
-
-                draw_text(
-                    frame,
-                    f"{right_ankle_angle:.0f} deg",
-                    145,
-                    280,
-                    0.50,
-                    1
-                )
-
-
-            # =================================================
-            # WRISTS
-            # =================================================
-
-            draw_text(
-                frame,
-                "LEFT WRIST:",
-                25,
-                310,
-                0.48,
-                1
-            )
-
-
-            if not is_visible(left_wrist):
-
-                draw_text(
-                    frame,
-                    "NOT SHOWN IN VIDEO",
-                    145,
-                    310,
-                    0.42,
-                    1
-                )
-
-            else:
-
-                draw_text(
-                    frame,
-                    "TRACKING",
-                    145,
-                    310,
-                    0.45,
-                    1
-                )
-
-
-            draw_text(
-                frame,
-                "RIGHT WRIST:",
-                25,
-                335,
-                0.48,
-                1
-            )
-
-
-            if not is_visible(right_wrist):
-
-                draw_text(
-                    frame,
-                    "NOT SHOWN IN VIDEO",
-                    145,
-                    335,
-                    0.42,
-                    1
-                )
-
-            else:
-
-                draw_text(
-                    frame,
-                    "TRACKING",
-                    145,
-                    335,
-                    0.45,
-                    1
-                )
-
-
-            # =================================================
-            # STATUS
-            # =================================================
-
-            draw_text(
-                frame,
-                "STATUS:",
-                25,
-                365,
-                0.50,
-                2
-            )
-
-
-            draw_text(
-                frame,
-                status,
-                110,
-                365,
-                0.50,
-                2
+                height,
+                warnings
             )
 
 
         # ====================================================
-        # NO PERSON
-        # ====================================================
-
-        else:
-
-            status = "NO PERSON DETECTED"
-
-            caution_node = "NONE"
-
-            caution_branch = "NONE"
-
-            caution_message = ""
-
-
-            # Clear histories
-            left_knee_history.clear()
-            right_knee_history.clear()
-
-            left_elbow_history.clear()
-            right_elbow_history.clear()
-
-            left_ankle_history.clear()
-            right_ankle_history.clear()
-
-            left_wrist_history.clear()
-            right_wrist_history.clear()
-
-
-            # Reset counters
-            left_knee_warning_count = 0
-            right_knee_warning_count = 0
-
-            left_elbow_warning_count = 0
-            right_elbow_warning_count = 0
-
-            left_ankle_warning_count = 0
-            right_ankle_warning_count = 0
-
-            fall_warning_count = 0
-
-
-            previous_left_wrist = None
-            previous_right_wrist = None
-
-
-        # ====================================================
-        # TOP BAR
+        # CREATE INFORMATION PANEL
         # ====================================================
 
         cv2.rectangle(
             frame,
-            (0, 0),
-            (width, 70),
-            (25, 25, 25),
+            (10, 10),
+            (620, 430),
+            (0, 0, 0),
             -1
         )
 
 
-        draw_text(
-            frame,
-            "PLAYSAFE AI",
-            20,
-            45,
-            1.0,
-            2
-        )
+        # ====================================================
+        # BODY
+        # ====================================================
+
+        if body_status == "BODY: DETECTED":
+
+            body_color = (0, 255, 0)
+
+        else:
+
+            body_color = (255, 255, 255)
 
 
-        draw_text(
+        put_text(
             frame,
-            status,
-            width - 300,
-            45,
-            0.60,
-            2
+            body_status,
+            25,
+            40,
+            body_color
         )
 
 
         # ====================================================
-        # CAUTION INFORMATION
+        # KNEES
         # ====================================================
 
-        if caution_message:
+        left_color = (
+            (0, 0, 255)
+            if warnings["left_knee"]
+            else (255, 255, 255)
+        )
 
-            caution_height = 130
 
-            caution_top = (
-                height -
-                caution_height -
-                15
+        right_color = (
+            (0, 0, 255)
+            if warnings["right_knee"]
+            else (255, 255, 255)
+        )
+
+
+        put_text(
+            frame,
+            left_knee_status,
+            25,
+            75,
+            left_color
+        )
+
+
+        put_text(
+            frame,
+            right_knee_status,
+            25,
+            105,
+            right_color
+        )
+
+
+        # ====================================================
+        # ANKLES
+        # ====================================================
+
+        left_ankle_color = (
+            (0, 0, 255)
+            if warnings["left_ankle"]
+            else (255, 255, 255)
+        )
+
+
+        right_ankle_color = (
+            (0, 0, 255)
+            if warnings["right_ankle"]
+            else (255, 255, 255)
+        )
+
+
+        put_text(
+            frame,
+            left_ankle_status,
+            25,
+            140,
+            left_ankle_color
+        )
+
+
+        put_text(
+            frame,
+            right_ankle_status,
+            25,
+            170,
+            right_ankle_color
+        )
+
+
+        # ====================================================
+        # ELBOWS
+        # ====================================================
+
+        left_elbow_color = (
+            (0, 0, 255)
+            if warnings["left_elbow"]
+            else (255, 255, 255)
+        )
+
+
+        right_elbow_color = (
+            (0, 0, 255)
+            if warnings["right_elbow"]
+            else (255, 255, 255)
+        )
+
+
+        put_text(
+            frame,
+            left_elbow_status,
+            25,
+            205,
+            left_elbow_color
+        )
+
+
+        put_text(
+            frame,
+            right_elbow_status,
+            25,
+            235,
+            right_elbow_color
+        )
+
+
+        # ====================================================
+        # WRISTS
+        # ====================================================
+
+        left_wrist_color = (
+            (0, 0, 255)
+            if warnings["left_wrist"]
+            else (255, 255, 255)
+        )
+
+
+        right_wrist_color = (
+            (0, 0, 255)
+            if warnings["right_wrist"]
+            else (255, 255, 255)
+        )
+
+
+        put_text(
+            frame,
+            left_wrist_status,
+            25,
+            270,
+            left_wrist_color
+        )
+
+
+        put_text(
+            frame,
+            right_wrist_status,
+            25,
+            300,
+            right_wrist_color
+        )
+
+
+        # ====================================================
+        # SHOULDER
+        # ====================================================
+
+        shoulder_color = (
+            (0, 0, 255)
+            if warnings["shoulder"]
+            else (255, 255, 255)
+        )
+
+
+        put_text(
+            frame,
+            shoulder_status,
+            25,
+            335,
+            shoulder_color
+        )
+
+
+        # ====================================================
+        # HIP
+        # ====================================================
+
+        hip_color = (
+            (0, 0, 255)
+            if warnings["hip"]
+            else (255, 255, 255)
+        )
+
+
+        put_text(
+            frame,
+            hip_status,
+            25,
+            365,
+            hip_color
+        )
+
+
+        # ====================================================
+        # TORSO
+        # ====================================================
+
+        torso_color = (
+            (0, 0, 255)
+            if warnings["torso"]
+            else (255, 255, 255)
+        )
+
+
+        put_text(
+            frame,
+            torso_status,
+            25,
+            395,
+            torso_color
+        )
+
+
+        # ====================================================
+        # CAUTION MESSAGES
+        # ====================================================
+
+        active_warnings = []
+
+
+        if warnings["left_knee"]:
+
+            active_warnings.append(
+                "LEFT KNEE"
             )
 
 
+        if warnings["right_knee"]:
+
+            active_warnings.append(
+                "RIGHT KNEE"
+            )
+
+
+        if warnings["left_ankle"]:
+
+            active_warnings.append(
+                "LEFT ANKLE"
+            )
+
+
+        if warnings["right_ankle"]:
+
+            active_warnings.append(
+                "RIGHT ANKLE"
+            )
+
+
+        if warnings["left_elbow"]:
+
+            active_warnings.append(
+                "LEFT ELBOW"
+            )
+
+
+        if warnings["right_elbow"]:
+
+            active_warnings.append(
+                "RIGHT ELBOW"
+            )
+
+
+        if warnings["shoulder"]:
+
+            active_warnings.append(
+                "SHOULDER"
+            )
+
+
+        if warnings["hip"]:
+
+            active_warnings.append(
+                "HIP"
+            )
+
+
+        if warnings["torso"]:
+
+            active_warnings.append(
+                "TORSO"
+            )
+
+
+        if warnings["fall"]:
+
+            active_warnings.append(
+                "SUDDEN MOVEMENT"
+            )
+
+
+        # ====================================================
+        # DISPLAY WARNING
+        # ====================================================
+
+        if active_warnings:
+
             cv2.rectangle(
                 frame,
-                (15, caution_top),
-                (
-                    width - 15,
-                    height - 15
-                ),
-                (35, 35, 35),
+                (10, 450),
+                (900, 515),
+                (0, 0, 0),
                 -1
             )
 
 
-            draw_text(
-                frame,
-                caution_message,
-                30,
-                caution_top + 30,
-                0.60,
-                2
+            warning_text = (
+                "CAUTION: "
+                +
+                ", ".join(active_warnings)
             )
 
 
-            draw_text(
+            put_text(
                 frame,
-                "CAUTION NODE: "
-                + caution_node,
-                30,
-                caution_top + 60,
-                0.48,
-                1
+                warning_text,
+                25,
+                490,
+                (0, 0, 255),
+                0.70
             )
 
 
-            draw_text(
+            put_text(
                 frame,
-                "BRANCH: "
-                + caution_branch,
-                30,
-                caution_top + 88,
-                0.43,
-                1
+                "Movement screening only - not an injury diagnosis",
+                25,
+                540,
+                (255, 255, 255),
+                0.48
             )
 
 
-            draw_text(
+        elif body_status == "BODY: DETECTED":
+
+            put_text(
                 frame,
-                "Movement screening only - "
-                "not a medical diagnosis",
-                30,
-                caution_top + 113,
-                0.38,
-                1
+                "MOVEMENT SCREEN: ACTIVE",
+                25,
+                470,
+                (0, 255, 0),
+                0.65
             )
 
 
         # ====================================================
-        # BOTTOM INSTRUCTION
+        # FALL STATUS
         # ====================================================
 
-        draw_text(
+        if fall_status:
+
+            put_text(
+                frame,
+                fall_status,
+                25,
+                575,
+                (0, 0, 255),
+                0.65
+            )
+
+
+        # ====================================================
+        # LEGEND
+        # ====================================================
+
+        put_text(
             frame,
-            "Press Q to quit",
-            20,
-            height - 10,
-            0.42,
-            1
+            "GREEN = tracked",
+            width - 280,
+            35,
+            (0, 255, 0),
+            0.50
+        )
+
+
+        put_text(
+            frame,
+            "RED = caution",
+            width - 280,
+            65,
+            (0, 0, 255),
+            0.50
         )
 
 
         # ====================================================
-        # SHOW FRAME
+        # QUIT
+        # ====================================================
+
+        put_text(
+            frame,
+            "Press Q to quit",
+            25,
+            height - 25,
+            (255, 255, 255),
+            0.55
+        )
+
+
+        # ====================================================
+        # SHOW CAMERA
         # ====================================================
 
         cv2.imshow(
-            "PlaySafe AI - Movement Analysis",
+            WINDOW_NAME,
             frame
         )
 
@@ -2115,8 +1901,4 @@ cap.release()
 
 cv2.destroyAllWindows()
 
-
-print("")
-print("============================================")
-print("        PlaySafe AI stopped.")
-print("============================================")
+print("\nPlaySafe AI camera stopped.")
