@@ -1,0 +1,29 @@
+========================================================================
+                  PLAYSAFE AI : KINEMATIC SESSION REPORT                
+========================================================================
+ Source Media       : test1.mp4.mp4
+ Total Frames       : 333
+ Duration Processed : 14.12 seconds
+ Average FPS        : 23.6
+------------------------------------------------------------------------
+ BIOMECHANICAL RANGE OF MOTION (ROM) SUMMARY
+------------------------------------------------------------------------
+ Joint Name       | Min Angle  | Max Angle  | Avg Angle 
+ -----------------------------------------------------------------
+ Left Elbow       | 33 deg     | 172 deg    | 120 deg   
+ Right Elbow      | 102 deg    | 163 deg    | 140 deg   
+ Left Wrist       | 85 deg     | 177 deg    | 147 deg   
+ Right Wrist      | 134 deg    | 171 deg    | 151 deg   
+ Left Shoulder    | 6 deg      | 105 deg    | 37 deg    
+ Right Shoulder   | 12 deg     | 165 deg    | 62 deg    
+ Left Hip         | 104 deg    | 178 deg    | 151 deg   
+ Right Hip        | 72 deg     | 174 deg    | 136 deg   
+ Left Knee        | 67 deg     | 176 deg    | 146 deg   
+ Right Knee       | 73 deg     | 174 deg    | 139 deg   
+ Left Ankle       | 53 deg     | 160 deg    | 112 deg   
+ Right Ankle      | 64 deg     | 178 deg    | 127 deg   
+------------------------------------------------------------------------
+ LOGGED CRITICAL KINEMATIC EVENTS
+------------------------------------------------------------------------
+  [+] No high-confidence fall or impact events detected.
+========================================================================

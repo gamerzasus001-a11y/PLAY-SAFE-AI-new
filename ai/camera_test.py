@@ -3,13 +3,8 @@ camera_test.py
 --------------
 PlaySafe AI - Advanced Kinematic Movement & Fall Screening MVP.
 
-Features 3D spatial angle calculations, kinematic chain collapse detection 
-(Base of Support & Bracing), and production-ready type hinting.
-
-USAGE
------
-Webcam: python camera_test.py
-Video:  python camera_test.py --video path/to/test.mp4
+Features 3D spatial angle calculations, kinematic collapse detection,
+and a Post-Analysis Session Report displayed at the end of processing.
 """
 
 import argparse
@@ -18,7 +13,6 @@ import os
 import sys
 import time
 from collections import deque
-from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set, Any
 
 import cv2
@@ -34,19 +28,19 @@ except ImportError:
 
 
 # ==========================================================================
-# SECTION 1: POSE LANDMARK CONSTANTS & CONFIGURATION
+# SECTION 1: POSE LANDMARK CONSTANTS
 # ==========================================================================
 NOSE = 0
 LEFT_EAR, RIGHT_EAR = 7, 8
 LEFT_SHOULDER, RIGHT_SHOULDER = 11, 12
 LEFT_ELBOW, RIGHT_ELBOW = 13, 14
 LEFT_WRIST, RIGHT_WRIST = 15, 16
-LEFT_INDEX, RIGHT_INDEX = 19, 20      # Crucial for Wrist Angle
+LEFT_INDEX, RIGHT_INDEX = 19, 20      
 LEFT_HIP, RIGHT_HIP = 23, 24
 LEFT_KNEE, RIGHT_KNEE = 25, 26
 LEFT_ANKLE, RIGHT_ANKLE = 27, 28
 LEFT_HEEL, RIGHT_HEEL = 29, 30
-LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX = 31, 32  # Crucial for Ankle Angle
+LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX = 31, 32  
 
 POSE_CONNECTIONS = [
     (LEFT_SHOULDER, RIGHT_SHOULDER), (LEFT_SHOULDER, LEFT_ELBOW), (LEFT_ELBOW, LEFT_WRIST),
@@ -68,7 +62,6 @@ BODY_PART_LANDMARKS: Dict[str, List[int]] = {
     "Ankle": [LEFT_ANKLE, RIGHT_ANKLE, LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX],
 }
 
-# 3-Point Joint Definitions: (Proximal, Vertex, Distal)
 ANGLE_DEFINITIONS: Dict[str, Tuple[int, int, int]] = {
     "Left Elbow": (LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST),
     "Right Elbow": (RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST),
@@ -84,7 +77,6 @@ ANGLE_DEFINITIONS: Dict[str, Tuple[int, int, int]] = {
     "Right Ankle": (RIGHT_KNEE, RIGHT_ANKLE, RIGHT_FOOT_INDEX),
 }
 
-# Thresholds
 VISIBILITY_THRESHOLD = 0.60
 PRESENCE_THRESHOLD = 0.60
 FRAME_MARGIN = 0.05
@@ -94,16 +86,13 @@ FRAME_MARGIN = 0.05
 # SECTION 2: 3D SPATIAL MATHEMATICS
 # ==========================================================================
 def is_landmark_reliable(lm: Any) -> bool:
-    """Validates landmark occlusion, presence, and frame bounds."""
     if not lm: return False
     if getattr(lm, "visibility", 0.0) < VISIBILITY_THRESHOLD: return False
     if getattr(lm, "presence", 0.0) < PRESENCE_THRESHOLD: return False
-    
     x, y = getattr(lm, "x", None), getattr(lm, "y", None)
     if x is None or y is None: return False
     if not (-FRAME_MARGIN <= x <= 1 + FRAME_MARGIN): return False
     if not (-FRAME_MARGIN <= y <= 1 + FRAME_MARGIN): return False
-    
     return True
 
 def get_landmark(landmarks: Any, idx: int) -> Any:
@@ -111,22 +100,14 @@ def get_landmark(landmarks: Any, idx: int) -> Any:
     return landmarks[idx]
 
 def calculate_angle_3d(a: Any, b: Any, c: Any) -> Optional[float]:
-    """
-    Computes the 3D angle at vertex b using the dot product of vectors ba and bc.
-    Leverages MediaPipe's Z-coordinate for true spatial awareness.
-    """
     if not all(is_landmark_reliable(pt) for pt in (a, b, c)): return None
-        
     try:
         ba = (a.x - b.x, a.y - b.y, getattr(a, 'z', 0) - getattr(b, 'z', 0))
         bc = (c.x - b.x, c.y - b.y, getattr(c, 'z', 0) - getattr(b, 'z', 0))
-        
         dot_product = sum(i * j for i, j in zip(ba, bc))
         mag_ba = math.sqrt(sum(i**2 for i in ba))
         mag_bc = math.sqrt(sum(i**2 for i in bc))
-        
         if mag_ba < 1e-6 or mag_bc < 1e-6: return None
-            
         cos_angle = max(-1.0, min(1.0, dot_product / (mag_ba * mag_bc)))
         return math.degrees(math.acos(cos_angle))
     except (ValueError, ZeroDivisionError, AttributeError):
@@ -138,32 +119,35 @@ def midpoint(a: Any, b: Any) -> Optional[Tuple[float, float]]:
 
 
 # ==========================================================================
-# SECTION 3: KINEMATIC MOVEMENT ANALYZER
+# SECTION 3: KINEMATIC MOVEMENT ANALYZER & REPORT DATA
 # ==========================================================================
 class MovementAnalyzer:
-    """Evaluates biomechanics over a rolling window to detect kinematic collapse."""
-    
     def __init__(self, window_size: int = 15):
         self.window_size = window_size
         self.angle_history: Dict[str, deque] = {name: deque(maxlen=window_size) for name in ANGLE_DEFINITIONS}
         self.torso_mid_history: deque = deque(maxlen=window_size)
         self.torso_angle_history: deque = deque(maxlen=window_size)
         
-        # SIH-Tuned Kinematic Thresholds
-        self.SUDDEN_CHANGE_DEG = 35.0
+        # Session Analytics Accumulators
+        self.total_frames_processed = 0
+        self.joint_stats: Dict[str, Dict[str, Any]] = {
+            name: {"min": 999.0, "max": 0.0, "sum": 0.0, "count": 0} for name in ANGLE_DEFINITIONS
+        }
+        self.logged_events: List[Dict[str, Any]] = []
+        self._last_event_time = -5.0  # Cooldown between event logs (seconds)
+
+        # Thresholds
         self.ASYMMETRY_DEG = 25.0
-        self.TORSO_INCLINE_CAUTION_DEG = 45.0
-        
-        # Advanced Fall Detection (Kinematic Collapse)
         self.FALL_TORSO_ANGLE_DEG = 50.0     
         self.FALL_DROP_THRESHOLD = 0.10      
-        self.ANKLE_COLLAPSE_RATE = 30.0      # Rapid dorsiflexion/plantarflexion
-        self.WRIST_BRACE_RATE = 40.0         # Throwing hands out to break a fall
+        self.ANKLE_COLLAPSE_RATE = 30.0      
+        self.WRIST_BRACE_RATE = 40.0         
 
-    def update(self, landmarks: Any) -> None:
+    def update(self, landmarks: Any, current_timestamp_sec: float) -> None:
         if not landmarks: return
-        
-        # Update 3D Joint Angles
+        self.total_frames_processed += 1
+
+        # Process 3D Joint Angles & Accumulate Stats
         for name, (a_idx, b_idx, c_idx) in ANGLE_DEFINITIONS.items():
             angle = calculate_angle_3d(
                 get_landmark(landmarks, a_idx), 
@@ -171,8 +155,15 @@ class MovementAnalyzer:
                 get_landmark(landmarks, c_idx)
             )
             self.angle_history[name].append(angle)
+            
+            if angle is not None:
+                st = self.joint_stats[name]
+                st["min"] = min(st["min"], angle)
+                st["max"] = max(st["max"], angle)
+                st["sum"] += angle
+                st["count"] += 1
 
-        # Update Torso Kinematics
+        # Process Torso Motion
         l_sh, r_sh = get_landmark(landmarks, LEFT_SHOULDER), get_landmark(landmarks, RIGHT_SHOULDER)
         l_hip, r_hip = get_landmark(landmarks, LEFT_HIP), get_landmark(landmarks, RIGHT_HIP)
         sh_mid, hip_mid = midpoint(l_sh, r_sh), midpoint(l_hip, r_hip)
@@ -191,9 +182,7 @@ class MovementAnalyzer:
 
     def joint_status(self, visibility: Dict[str, bool]) -> Dict[str, str]:
         status = {}
-        pairs = ["Elbow", "Wrist", "Shoulder", "Hip", "Knee", "Ankle"]
-        
-        for part in pairs:
+        for part in ["Elbow", "Wrist", "Shoulder", "Hip", "Knee", "Ankle"]:
             if not visibility.get(part, False):
                 status[part] = "Not shown in video"
                 continue
@@ -208,8 +197,7 @@ class MovementAnalyzer:
             status[part] = "Normal"
         return status
 
-    def fall_status(self, visibility: Dict[str, bool]) -> str:
-        """Evaluates 'Kinematic Chain Collapse' combining torso, ankles, and wrists."""
+    def fall_status(self, visibility: Dict[str, bool], current_time_sec: float) -> str:
         if not visibility.get("Torso", False): return "Not shown in video"
 
         positions = [p for p in self.torso_mid_history if p is not None]
@@ -222,7 +210,6 @@ class MovementAnalyzer:
 
         if not is_falling: return "Stable"
 
-        # Check for secondary Kinematic Collapse (Ankles / Wrists)
         collapse_signals = 0
         for side in ["Left", "Right"]:
             ankle_hist = [a for a in self.angle_history[f"{side} Ankle"] if a is not None]
@@ -233,22 +220,85 @@ class MovementAnalyzer:
             if len(wrist_hist) >= 2 and abs(wrist_hist[-1] - wrist_hist[0]) > self.WRIST_BRACE_RATE:
                 collapse_signals += 1
 
-        if collapse_signals >= 1:
-            return "CRITICAL: Kinematic Collapse (Fall)"
-        return "Warning: Rapid Torso Drop"
+        state_msg = "CRITICAL: Kinematic Collapse (Fall)" if collapse_signals >= 1 else "Warning: Rapid Torso Drop"
 
-    def get_flagged_parts(self, visibility: Dict[str, bool]) -> Set[str]:
+        # Log event if cooldown expired
+        if current_time_sec - self._last_event_time > 2.5:
+            self.logged_events.append({
+                "timestamp_sec": current_time_sec,
+                "type": state_msg
+            })
+            self._last_event_time = current_time_sec
+
+        return state_msg
+
+    def get_flagged_parts(self, visibility: Dict[str, bool], current_time_sec: float) -> Set[str]:
         flagged = set()
         for part, status in self.joint_status(visibility).items():
-            if status != "Normal" and status != "Not shown in video": flagged.add(part)
+            if status not in ("Normal", "Not shown in video"): flagged.add(part)
         
-        fall = self.fall_status(visibility)
+        fall = self.fall_status(visibility, current_time_sec)
         if "CRITICAL" in fall:
             flagged.update(["Torso", "Hip", "Ankle", "Wrist"])
         elif "Warning" in fall:
             flagged.update(["Torso", "Hip"])
             
         return flagged
+
+    def print_final_report(self, duration_sec: float, source_name: str) -> None:
+        """Prints a clean ASCII report to terminal and saves it to a text file."""
+        avg_fps = (self.total_frames_processed / duration_sec) if duration_sec > 0 else 0.0
+
+        report_lines = []
+        report_lines.append("========================================================================")
+        report_lines.append("                  PLAYSAFE AI : KINEMATIC SESSION REPORT                ")
+        report_lines.append("========================================================================")
+        report_lines.append(f" Source Media       : {source_name}")
+        report_lines.append(f" Total Frames       : {self.total_frames_processed}")
+        report_lines.append(f" Duration Processed : {duration_sec:.2f} seconds")
+        report_lines.append(f" Average FPS        : {avg_fps:.1f}")
+        report_lines.append("------------------------------------------------------------------------")
+        report_lines.append(" BIOMECHANICAL RANGE OF MOTION (ROM) SUMMARY")
+        report_lines.append("------------------------------------------------------------------------")
+        report_lines.append(f" {'Joint Name':<16} | {'Min Angle':<10} | {'Max Angle':<10} | {'Avg Angle':<10}")
+        report_lines.append(" " + "-"*65)
+
+        for name, st in self.joint_stats.items():
+            if st["count"] > 0:
+                min_deg = f"{int(st['min'])} deg"
+                max_deg = f"{int(st['max'])} deg"
+                avg_deg = f"{int(st['sum'] / st['count'])} deg"
+            else:
+                min_deg, max_deg, avg_deg = "N/A", "N/A", "N/A"
+            
+            report_lines.append(f" {name:<16} | {min_deg:<10} | {max_deg:<10} | {avg_deg:<10}")
+
+        report_lines.append("------------------------------------------------------------------------")
+        report_lines.append(" LOGGED CRITICAL KINEMATIC EVENTS")
+        report_lines.append("------------------------------------------------------------------------")
+
+        if self.logged_events:
+            for ev in self.logged_events:
+                t_sec = ev["timestamp_sec"]
+                mins, secs = int(t_sec // 60), t_sec % 60
+                time_str = f"{mins:02d}:{secs:05.2f}"
+                report_lines.append(f"  [!] Timestamp [{time_str}] -> {ev['type']}")
+        else:
+            report_lines.append("  [+] No high-confidence fall or impact events detected.")
+
+        report_lines.append("========================================================================")
+
+        # Print to terminal
+        report_str = "\n".join(report_lines)
+        print("\n" + report_str + "\n")
+
+        # Save to file
+        try:
+            with open("PlaySafe_Kinematic_Report.txt", "w") as f:
+                f.write(report_str)
+            print(">> Report successfully saved to 'PlaySafe_Kinematic_Report.txt'")
+        except Exception as e:
+            print(f"Warning: Could not save report file: {e}")
 
 
 # ==========================================================================
@@ -261,27 +311,24 @@ class UIDrawer:
     COLOR_BONE = (240, 240, 240)
     COLOR_BG = (20, 20, 25)
     COLOR_TEXT = (220, 220, 220)
-    COLOR_CYAN = (255, 200, 0)  # BGR Cyan for headers
+    COLOR_CYAN = (255, 200, 0)  
 
     @staticmethod
     def draw_skeleton(frame: np.ndarray, landmarks: Any, flagged_parts: Set[str]) -> np.ndarray:
         if not landmarks: return frame
         h, w = frame.shape[:2]
-        
-        def px(lm: Any) -> Tuple[int, int]: return int(lm.x * w), int(lm.y * h)
+        px = lambda lm: (int(lm.x * w), int(lm.y * h))
 
         flagged_indices = set()
         for part in flagged_parts:
             flagged_indices.update(BODY_PART_LANDMARKS.get(part, []))
 
-        # Draw bones
         for idx_a, idx_b in POSE_CONNECTIONS:
             lm_a, lm_b = get_landmark(landmarks, idx_a), get_landmark(landmarks, idx_b)
             if is_landmark_reliable(lm_a) and is_landmark_reliable(lm_b):
                 color = UIDrawer.COLOR_CRIT if (idx_a in flagged_indices or idx_b in flagged_indices) else UIDrawer.COLOR_BONE
                 cv2.line(frame, px(lm_a), px(lm_b), color, 2, cv2.LINE_AA)
 
-        # Draw joints
         for idx in range(len(landmarks)):
             lm = get_landmark(landmarks, idx)
             if is_landmark_reliable(lm):
@@ -290,7 +337,7 @@ class UIDrawer:
         return frame
 
     @staticmethod
-    def draw_hud(frame: np.ndarray, analyzer: MovementAnalyzer, visibility: Dict[str, bool], fps: float) -> np.ndarray:
+    def draw_hud(frame: np.ndarray, analyzer: MovementAnalyzer, visibility: Dict[str, bool], fps: float, time_sec: float) -> np.ndarray:
         h, w = frame.shape[:2]
         panel_w = 420
         canvas = np.full((h, w + panel_w, 3), UIDrawer.COLOR_BG, dtype=np.uint8)
@@ -303,23 +350,22 @@ class UIDrawer:
             cv2.putText(canvas, txt, (x0, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick, cv2.LINE_AA)
             y += gap
 
-        text("PLAYSAFE AI : KINEMATICS", UIDrawer.COLOR_CYAN, 0.7, 2, 40)
-        text(f"Engine FPS: {fps:.1f}", (150, 150, 150), 0.45, 1, 30)
+        text("PLAYSAFE AI : KINEMATICS", UIDrawer.COLOR_CYAN, 0.7, 2, 35)
+        text(f"Engine FPS: {fps:.1f} | Time: {time_sec:.1f}s", (150, 150, 150), 0.45, 1, 30)
 
-        # Fall Status (Hero Metric)
-        fall_stat = analyzer.fall_status(visibility)
+        fall_stat = analyzer.fall_status(visibility, time_sec)
         f_color = UIDrawer.COLOR_CRIT if "CRITICAL" in fall_stat else (UIDrawer.COLOR_WARN if "Warning" in fall_stat else UIDrawer.COLOR_OK)
         text("KINEMATIC STATE:", UIDrawer.COLOR_CYAN, 0.55, 1, 25)
-        text(f"> {fall_stat}", f_color, 0.6, 2, 35)
+        text(f"> {fall_stat}", f_color, 0.55, 2, 35)
 
-        # 3D Angles
         text("LIVE 3D JOINT ANGLES", UIDrawer.COLOR_CYAN, 0.55, 1, 25)
         for part in ["Wrist", "Elbow", "Shoulder", "Hip", "Knee", "Ankle"]:
             l_ang = analyzer.current_angle(f"Left {part}")
             r_ang = analyzer.current_angle(f"Right {part}")
             
-            l_str = f"{int(l_ang):03d}" if l_ang else "---"
-            r_str = f"{int(r_ang):03d}" if r_ang else "---"
+            # This is the line that caused the error! It has been fixed to check `is not None`
+            l_str = f"{int(l_ang):03d}" if l_ang is not None else "---"
+            r_str = f"{int(r_ang):03d}" if r_ang is not None else "---"
             
             status = analyzer.joint_status(visibility).get(part, "")
             color = UIDrawer.COLOR_WARN if "Asym" in status else UIDrawer.COLOR_TEXT
@@ -337,6 +383,7 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
         print(f"ERROR: Model not found at: {model_path}")
         sys.exit(1)
 
+    source_desc = video_path if video_path else f"Webcam (Device {camera_index})"
     cap = cv2.VideoCapture(video_path if video_path else camera_index)
     if not cap.isOpened():
         print("ERROR: Could not open video source.")
@@ -356,7 +403,9 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window_name, 1500, 800)
 
-    frame_idx, display_fps, prev_time = 0, 0.0, time.time()
+    frame_idx, display_fps = 0, 0.0
+    start_time = time.time()
+    prev_time = start_time
     fps_source = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
     print("PlaySafe AI Engine running. Press Q to quit.")
@@ -369,7 +418,9 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
 
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            timestamp_ms = int((frame_idx / fps_source) * 1000)
+            
+            time_sec = frame_idx / fps_source
+            timestamp_ms = int(time_sec * 1000)
             frame_idx += 1
 
             landmarks = None
@@ -383,9 +434,9 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
                 for part, idx_list in BODY_PART_LANDMARKS.items():
                     flags = [is_landmark_reliable(get_landmark(landmarks, i)) for i in idx_list]
                     visibility[part] = any(flags)
-                analyzer.update(landmarks)
+                analyzer.update(landmarks, time_sec)
 
-            flagged = analyzer.get_flagged_parts(visibility)
+            flagged = analyzer.get_flagged_parts(visibility, time_sec)
             frame = UIDrawer.draw_skeleton(frame, landmarks, flagged)
 
             now = time.time()
@@ -393,13 +444,17 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
                 display_fps = (display_fps * 0.9) + (0.1 * (1.0 / (now - prev_time)))
             prev_time = now
 
-            canvas = UIDrawer.draw_hud(frame, analyzer, visibility, display_fps)
+            canvas = UIDrawer.draw_hud(frame, analyzer, visibility, display_fps, time_sec)
             cv2.imshow(window_name, canvas)
 
             if cv2.waitKey(1) & 0xFF in (ord('q'), ord('Q')): break
 
+    total_duration = time.time() - start_time
     cap.release()
     cv2.destroyAllWindows()
+
+    # Print session report to terminal & text file
+    analyzer.print_final_report(total_duration, source_desc)
 
 
 if __name__ == "__main__":
@@ -409,6 +464,5 @@ if __name__ == "__main__":
     parser.add_argument("--camera", type=int, default=0, help="Webcam index")
     
     args = parser.parse_args()
-    
     model_loc = args.model if os.path.isfile(args.model) else os.path.join(os.path.dirname(__file__), "pose_landmarker_full.task")
     run_engine(model_loc, args.video, args.camera)
