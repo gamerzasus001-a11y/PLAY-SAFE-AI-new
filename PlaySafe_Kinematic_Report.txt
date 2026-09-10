@@ -3,8 +3,9 @@
 ========================================================================
  Source Media       : test2.mp4
  Total Frames       : 85
- Duration Processed : 12.61 seconds
+ Duration Processed : 12.64 seconds
  Average FPS        : 6.7
+ AI Confidence Score: 93.0% (Based on Hardware Occlusion & Probability)
 ------------------------------------------------------------------------
  BIOMECHANICAL RANGE OF MOTION (ROM) SUMMARY
 ------------------------------------------------------------------------
@@ -23,7 +24,30 @@
  Left Ankle       | 44 deg     | 172 deg    | 101 deg   
  Right Ankle      | 25 deg     | 174 deg    | 103 deg   
 ------------------------------------------------------------------------
- LOGGED CRITICAL KINEMATIC EVENTS
+ LOGGED CRITICAL KINEMATIC EVENTS (FALLS)
 ------------------------------------------------------------------------
   [+] No high-confidence fall or impact events detected.
+------------------------------------------------------------------------
+ BIOMECHANICAL FORM CORRECTION PLAN & TIMESTAMPS
+------------------------------------------------------------------------
+ [FAULT] Elbow Flare
+   -> [FIX] Tuck elbows closer to body to protect joints.
+   -> [OCCURRED AT] 00:03.12, 00:06.17
+
+ [FAULT] Ankle Over-Pronation
+   -> [FIX] Point toes forward to stop knee shear.
+   -> [OCCURRED AT] 00:03.21, 00:06.79
+
+ [FAULT] Left Wrist Collapsing
+   -> [FIX] Keep left wrist neutral and stacked.
+   -> [OCCURRED AT] 00:03.29
+
+ [FAULT] Knee Valgus
+   -> [FIX] Push knees outward to align with toes.
+   -> [OCCURRED AT] 00:04.33
+
+ [FAULT] Right Wrist Collapsing
+   -> [FIX] Keep right wrist neutral and stacked.
+   -> [OCCURRED AT] 00:05.12
+
 ========================================================================
