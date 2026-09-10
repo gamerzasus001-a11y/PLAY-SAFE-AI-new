@@ -4,7 +4,7 @@ camera_test.py
 PlaySafe AI - Advanced Kinematic Movement & Fall Screening MVP.
 
 Features:
-- Full-Body Form Analysis (Head, Shoulders, Elbows, Wrists, Hips, Knees, Ankles)
+- Full-Body Form Analysis with Layman Explanations & Injury Risks
 - Form Fault Timestamp Logging for video review
 - 3D spatial angle calculations leveraging Z-depth
 - Kinematic chain collapse detection (Falls)
@@ -34,7 +34,7 @@ except ImportError:
 
 
 # ==========================================================================
-# SECTION 1: POSE LANDMARK CONSTANTS
+# SECTION 1: POSE LANDMARK CONSTANTS & FAULT DATABASE
 # ==========================================================================
 NOSE = 0
 LEFT_EAR, RIGHT_EAR = 7, 8
@@ -81,6 +81,55 @@ ANGLE_DEFINITIONS: Dict[str, Tuple[int, int, int]] = {
     "Right Knee": (RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE),
     "Left Ankle": (LEFT_KNEE, LEFT_ANKLE, LEFT_FOOT_INDEX),
     "Right Ankle": (RIGHT_KNEE, RIGHT_ANKLE, RIGHT_FOOT_INDEX),
+}
+
+# The AI Database linking specific faults to layman explanations and medical risks
+FAULT_DETAILS = {
+    "Lateral Head Tilt": {
+        "meaning": "The head is leaning to one side instead of staying straight and upright.",
+        "fix": "Keep your gaze level to protect your neck.",
+        "injury": "Neck strain, muscle spasms, or cervical disc compression."
+    },
+    "Forward Neck Posture": {
+        "meaning": "The head is jutting forward past the shoulders (like looking closely at a phone).",
+        "fix": "Tuck your chin slightly and pull your head back over your shoulders.",
+        "injury": "Chronic neck pain, upper back tension, spinal disc herniation."
+    },
+    "Uneven Shoulders": {
+        "meaning": "One shoulder is shrugging or dropping lower than the other.",
+        "fix": "Level your shoulders to balance your core.",
+        "injury": "Rotator cuff strain, shoulder impingement, lower back pain."
+    },
+    "Elbow Flare": {
+        "meaning": "The elbows are pointing too far outwards away from the ribs.",
+        "fix": "Tuck elbows closer to your body to protect the shoulder joints.",
+        "injury": "Shoulder impingement, rotator cuff tears, elbow joint stress."
+    },
+    "Left Wrist Collapsing": {
+        "meaning": "The left wrist is bending dangerously far backward under pressure.",
+        "fix": "Keep the left wrist neutral and stacked straight.",
+        "injury": "Wrist sprains, carpal tunnel syndrome, ligament tears."
+    },
+    "Right Wrist Collapsing": {
+        "meaning": "The right wrist is bending dangerously far backward under pressure.",
+        "fix": "Keep the right wrist neutral and stacked straight.",
+        "injury": "Wrist sprains, carpal tunnel syndrome, ligament tears."
+    },
+    "Uneven Hips": {
+        "meaning": "One side of the waist/pelvis is hiked up higher than the other.",
+        "fix": "Level your pelvis and engage your core.",
+        "injury": "Lower back pain, SI joint dysfunction, hip bursitis."
+    },
+    "Knee Valgus": {
+        "meaning": "Knees are caving inward toward each other (knock-knees).",
+        "fix": "Push your knees outward so they track directly over your toes.",
+        "injury": "ACL tears, meniscus damage, patellar tendonitis."
+    },
+    "Ankle Over-Pronation": {
+        "meaning": "Feet are flared outward (duck feet), placing extreme weight on the inner foot.",
+        "fix": "Point toes straight forward to stop twisting the knee joint.",
+        "injury": "Plantar fasciitis, shin splints, Achilles tendonitis."
+    }
 }
 
 VISIBILITY_THRESHOLD = 0.60
@@ -145,9 +194,9 @@ class MovementAnalyzer:
         self._last_event_time = -5.0
         
         # Form tracking with timestamps
-        self.detected_form_faults: Dict[str, str] = {}
-        self.form_fault_timestamps: Dict[str, List[float]] = {}  # Tracks all timestamps for each fault
-        self.active_faults: Dict[str, str] = {}  
+        self.detected_form_faults: Set[str] = set()
+        self.form_fault_timestamps: Dict[str, List[float]] = {}
+        self.active_faults: List[str] = []  
 
         # Confidence Metrics
         self.current_confidence = 0.0
@@ -159,8 +208,8 @@ class MovementAnalyzer:
         self.ANKLE_COLLAPSE_RATE = 30.0      
         self.WRIST_BRACE_RATE = 40.0         
 
-    def analyze_full_body_form(self, landmarks: Any, visibility: Dict[str, bool]) -> Dict[str, str]:
-        faults = {}
+    def analyze_full_body_form(self, landmarks: Any, visibility: Dict[str, bool]) -> List[str]:
+        faults = []
         if not landmarks: return faults
 
         def h_dist(a, b): return abs(landmarks[a].x - landmarks[b].x)
@@ -168,27 +217,28 @@ class MovementAnalyzer:
 
         if visibility.get("Head", False):
             if v_dist(LEFT_EAR, RIGHT_EAR) > 0.04:
-                faults["Lateral Head Tilt"] = "Keep gaze level to protect cervical spine."
+                faults.append("Lateral Head Tilt")
             if getattr(landmarks[LEFT_EAR], 'z', 0) < (getattr(landmarks[LEFT_SHOULDER], 'z', 0) - 0.15):
-                faults["Forward Neck Posture"] = "Tuck chin, pull head back over shoulders."
+                faults.append("Forward Neck Posture")
         if visibility.get("Shoulder", False) and v_dist(LEFT_SHOULDER, RIGHT_SHOULDER) > 0.05:
-            faults["Uneven Shoulders"] = "Level shoulders to correct core imbalance."
+            faults.append("Uneven Shoulders")
         if visibility.get("Elbow", False) and visibility.get("Shoulder", False):
             if h_dist(LEFT_ELBOW, RIGHT_ELBOW) > (h_dist(LEFT_SHOULDER, RIGHT_SHOULDER) * 1.6):
-                faults["Elbow Flare"] = "Tuck elbows closer to body to protect joints."
+                faults.append("Elbow Flare")
         if visibility.get("Wrist", False):
             for side, elbow, wrist, index in [("Left", LEFT_ELBOW, LEFT_WRIST, LEFT_INDEX), ("Right", RIGHT_ELBOW, RIGHT_WRIST, RIGHT_INDEX)]:
                 angle = calculate_angle_3d(landmarks[elbow], landmarks[wrist], landmarks[index])
                 if angle and angle < 140:
-                    faults[f"{side} Wrist Collapsing"] = f"Keep {side.lower()} wrist neutral and stacked."
+                    faults.append(f"{side} Wrist Collapsing")
         if visibility.get("Hip", False) and v_dist(LEFT_HIP, RIGHT_HIP) > 0.05:
-            faults["Uneven Hips"] = "Level your pelvis to avoid lower back strain."
+            faults.append("Uneven Hips")
         if visibility.get("Knee", False) and visibility.get("Ankle", False):
             if h_dist(LEFT_KNEE, RIGHT_KNEE) < (h_dist(LEFT_ANKLE, RIGHT_ANKLE) * 0.6):
-                faults["Knee Valgus"] = "Push knees outward to align with toes."
+                faults.append("Knee Valgus")
         if visibility.get("Ankle", False):
             if h_dist(LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX) > (h_dist(LEFT_HEEL, RIGHT_HEEL) * 1.6):
-                faults["Ankle Over-Pronation"] = "Point toes forward to stop knee shear."
+                faults.append("Ankle Over-Pronation")
+        
         return faults
 
     def update(self, landmarks: Any, current_timestamp_sec: float, visibility: Dict[str, bool]) -> None:
@@ -198,7 +248,7 @@ class MovementAnalyzer:
         
         self.total_frames_processed += 1
 
-        # Calculate Confidence Score based on Neural Network Probabilities
+        # Calculate Confidence Score
         vis_scores = [(getattr(lm, 'visibility', 0.0) + getattr(lm, 'presence', 0.0)) / 2.0 for lm in landmarks]
         self.current_confidence = (sum(vis_scores) / len(vis_scores)) * 100.0
         self.global_confidence_sum += self.current_confidence
@@ -224,14 +274,11 @@ class MovementAnalyzer:
 
         # Update Form Faults and Log Timestamps
         self.active_faults = self.analyze_full_body_form(landmarks, visibility)
-        for fault, fix in self.active_faults.items():
-            self.detected_form_faults[fault] = fix
-            
-            # Initialize timestamp list if new fault
+        for fault in self.active_faults:
+            self.detected_form_faults.add(fault)
             if fault not in self.form_fault_timestamps:
                 self.form_fault_timestamps[fault] = []
             
-            # Add timestamp if it's the first time, or if 3 seconds have passed (cooldown)
             timestamps = self.form_fault_timestamps[fault]
             if not timestamps or (current_timestamp_sec - timestamps[-1] > 3.0):
                 timestamps.append(current_timestamp_sec)
@@ -296,15 +343,17 @@ class MovementAnalyzer:
         report_lines.append(" BIOMECHANICAL FORM CORRECTION PLAN & TIMESTAMPS")
         report_lines.append("------------------------------------------------------------------------")
         if self.detected_form_faults:
-            for fault, fix in self.detected_form_faults.items():
-                report_lines.append(f" [FAULT] {fault}")
-                report_lines.append(f"   -> [FIX] {fix}")
+            for fault in self.detected_form_faults:
+                details = FAULT_DETAILS.get(fault, {"meaning": "Unknown", "fix": "Unknown", "injury": "Unknown"})
                 
-                # Format all timestamps recorded for this specific fault
+                report_lines.append(f" [FAULT DETECTED] {fault}")
+                report_lines.append(f"   -> [WHAT IT IS] {details['meaning']}")
+                report_lines.append(f"   -> [INJURY RISK] {details['injury']}")
+                report_lines.append(f"   -> [HOW TO FIX] {details['fix']}")
+                
+                # Format timestamps neatly
                 timestamps = self.form_fault_timestamps.get(fault, [])
                 formatted_ts = [f"{int(t // 60):02d}:{t % 60:05.2f}" for t in timestamps]
-                
-                # Print timestamps neatly (max 10 per line to avoid messy wrapping)
                 ts_str = ", ".join(formatted_ts[:10])
                 if len(formatted_ts) > 10: ts_str += f", ... (and {len(formatted_ts)-10} more)"
                 
@@ -405,7 +454,7 @@ class UIDrawer:
             y += 35
 
         # HUD HEADER
-        text("PLAYSAFE OS v4.5", UIDrawer.NEON_CYAN, 0.8, 2, 30)
+        text("PLAYSAFE OS v5.0", UIDrawer.NEON_CYAN, 0.8, 2, 30)
         text(f"UPLINK FPS : {fps:.1f}   |   SYS CONFIDENCE: {analyzer.current_confidence:.1f}%", (180, 180, 180), 0.45, 1, 40)
 
         # KINEMATIC STATE
@@ -431,7 +480,8 @@ class UIDrawer:
         # ACTIVE FORM CORRECTIONS
         section_header("ACTIVE FORM ANALYSIS")
         if analyzer.active_faults:
-            for fault, fix in analyzer.active_faults.items():
+            for fault in analyzer.active_faults:
+                fix = FAULT_DETAILS.get(fault, {}).get("fix", "")
                 text(f"WARN: {fault.upper()}", UIDrawer.NEON_CYAN, 0.5, 1, 20)
                 text(f" -> {fix}", (150, 150, 255), 0.4, 1, 25)
         else:

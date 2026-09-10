@@ -1,28 +1,28 @@
 ========================================================================
                   PLAYSAFE AI : KINEMATIC SESSION REPORT                
 ========================================================================
- Source Media       : test2.mp4
- Total Frames       : 85
- Duration Processed : 12.64 seconds
- Average FPS        : 6.7
- AI Confidence Score: 93.0% (Based on Hardware Occlusion & Probability)
+ Source Media       : test3.mp4
+ Total Frames       : 414
+ Duration Processed : 51.30 seconds
+ Average FPS        : 8.1
+ AI Confidence Score: 86.3% (Based on Hardware Occlusion & Probability)
 ------------------------------------------------------------------------
  BIOMECHANICAL RANGE OF MOTION (ROM) SUMMARY
 ------------------------------------------------------------------------
  Joint Name       | Min Angle  | Max Angle  | Avg Angle 
  -----------------------------------------------------------------
- Left Elbow       | 73 deg     | 158 deg    | 114 deg   
- Right Elbow      | 71 deg     | 169 deg    | 116 deg   
- Left Wrist       | 77 deg     | 177 deg    | 155 deg   
- Right Wrist      | 17 deg     | 176 deg    | 152 deg   
- Left Shoulder    | 12 deg     | 129 deg    | 44 deg    
- Right Shoulder   | 9 deg      | 128 deg    | 44 deg    
- Left Hip         | 24 deg     | 178 deg    | 134 deg   
- Right Hip        | 38 deg     | 176 deg    | 130 deg   
- Left Knee        | 10 deg     | 177 deg    | 102 deg   
- Right Knee       | 24 deg     | 176 deg    | 102 deg   
- Left Ankle       | 44 deg     | 172 deg    | 101 deg   
- Right Ankle      | 25 deg     | 174 deg    | 103 deg   
+ Left Elbow       | N/A        | N/A        | N/A       
+ Right Elbow      | 78 deg     | 172 deg    | 147 deg   
+ Left Wrist       | N/A        | N/A        | N/A       
+ Right Wrist      | 82 deg     | 178 deg    | 150 deg   
+ Left Shoulder    | N/A        | N/A        | N/A       
+ Right Shoulder   | 22 deg     | 113 deg    | 53 deg    
+ Left Hip         | N/A        | N/A        | N/A       
+ Right Hip        | 63 deg     | 175 deg    | 123 deg   
+ Left Knee        | N/A        | N/A        | N/A       
+ Right Knee       | 106 deg    | 170 deg    | 158 deg   
+ Left Ankle       | N/A        | N/A        | N/A       
+ Right Ankle      | 68 deg     | 126 deg    | 103 deg   
 ------------------------------------------------------------------------
  LOGGED CRITICAL KINEMATIC EVENTS (FALLS)
 ------------------------------------------------------------------------
@@ -30,24 +30,34 @@
 ------------------------------------------------------------------------
  BIOMECHANICAL FORM CORRECTION PLAN & TIMESTAMPS
 ------------------------------------------------------------------------
- [FAULT] Elbow Flare
-   -> [FIX] Tuck elbows closer to body to protect joints.
-   -> [OCCURRED AT] 00:03.12, 00:06.17
+ [FAULT DETECTED] Knee Valgus
+   -> [WHAT IT IS] Knees are caving inward toward each other (knock-knees).
+   -> [INJURY RISK] ACL tears, meniscus damage, patellar tendonitis.
+   -> [HOW TO FIX] Push your knees outward so they track directly over your toes.
+   -> [OCCURRED AT] 00:00.13, 00:03.20
 
- [FAULT] Ankle Over-Pronation
-   -> [FIX] Point toes forward to stop knee shear.
-   -> [OCCURRED AT] 00:03.21, 00:06.79
+ [FAULT DETECTED] Ankle Over-Pronation
+   -> [WHAT IT IS] Feet are flared outward (duck feet), placing extreme weight on the inner foot.
+   -> [INJURY RISK] Plantar fasciitis, shin splints, Achilles tendonitis.
+   -> [HOW TO FIX] Point toes straight forward to stop twisting the knee joint.
+   -> [OCCURRED AT] 00:00.20, 00:03.20, 00:06.21
 
- [FAULT] Left Wrist Collapsing
-   -> [FIX] Keep left wrist neutral and stacked.
-   -> [OCCURRED AT] 00:03.29
+ [FAULT DETECTED] Elbow Flare
+   -> [WHAT IT IS] The elbows are pointing too far outwards away from the ribs.
+   -> [INJURY RISK] Shoulder impingement, rotator cuff tears, elbow joint stress.
+   -> [HOW TO FIX] Tuck elbows closer to your body to protect the shoulder joints.
+   -> [OCCURRED AT] 00:01.57, 00:05.22
 
- [FAULT] Knee Valgus
-   -> [FIX] Push knees outward to align with toes.
-   -> [OCCURRED AT] 00:04.33
+ [FAULT DETECTED] Forward Neck Posture
+   -> [WHAT IT IS] The head is jutting forward past the shoulders (like looking closely at a phone).
+   -> [INJURY RISK] Chronic neck pain, upper back tension, spinal disc herniation.
+   -> [HOW TO FIX] Tuck your chin slightly and pull your head back over your shoulders.
+   -> [OCCURRED AT] 00:03.27
 
- [FAULT] Right Wrist Collapsing
-   -> [FIX] Keep right wrist neutral and stacked.
-   -> [OCCURRED AT] 00:05.12
+ [FAULT DETECTED] Right Wrist Collapsing
+   -> [WHAT IT IS] The right wrist is bending dangerously far backward under pressure.
+   -> [INJURY RISK] Wrist sprains, carpal tunnel syndrome, ligament tears.
+   -> [HOW TO FIX] Keep the right wrist neutral and stacked straight.
+   -> [OCCURRED AT] 00:00.60, 00:04.75
 
 ========================================================================
