@@ -1,27 +1,27 @@
 ========================================================================
                   PLAYSAFE AI : KINEMATIC SESSION REPORT                
 ========================================================================
- Source Media       : test1.mp4.mp4
- Total Frames       : 333
- Duration Processed : 14.12 seconds
- Average FPS        : 23.6
+ Source Media       : test2.mp4
+ Total Frames       : 85
+ Duration Processed : 12.61 seconds
+ Average FPS        : 6.7
 ------------------------------------------------------------------------
  BIOMECHANICAL RANGE OF MOTION (ROM) SUMMARY
 ------------------------------------------------------------------------
  Joint Name       | Min Angle  | Max Angle  | Avg Angle 
  -----------------------------------------------------------------
- Left Elbow       | 33 deg     | 172 deg    | 120 deg   
- Right Elbow      | 102 deg    | 163 deg    | 140 deg   
- Left Wrist       | 85 deg     | 177 deg    | 147 deg   
- Right Wrist      | 134 deg    | 171 deg    | 151 deg   
- Left Shoulder    | 6 deg      | 105 deg    | 37 deg    
- Right Shoulder   | 12 deg     | 165 deg    | 62 deg    
- Left Hip         | 104 deg    | 178 deg    | 151 deg   
- Right Hip        | 72 deg     | 174 deg    | 136 deg   
- Left Knee        | 67 deg     | 176 deg    | 146 deg   
- Right Knee       | 73 deg     | 174 deg    | 139 deg   
- Left Ankle       | 53 deg     | 160 deg    | 112 deg   
- Right Ankle      | 64 deg     | 178 deg    | 127 deg   
+ Left Elbow       | 73 deg     | 158 deg    | 114 deg   
+ Right Elbow      | 71 deg     | 169 deg    | 116 deg   
+ Left Wrist       | 77 deg     | 177 deg    | 155 deg   
+ Right Wrist      | 17 deg     | 176 deg    | 152 deg   
+ Left Shoulder    | 12 deg     | 129 deg    | 44 deg    
+ Right Shoulder   | 9 deg      | 128 deg    | 44 deg    
+ Left Hip         | 24 deg     | 178 deg    | 134 deg   
+ Right Hip        | 38 deg     | 176 deg    | 130 deg   
+ Left Knee        | 10 deg     | 177 deg    | 102 deg   
+ Right Knee       | 24 deg     | 176 deg    | 102 deg   
+ Left Ankle       | 44 deg     | 172 deg    | 101 deg   
+ Right Ankle      | 25 deg     | 174 deg    | 103 deg   
 ------------------------------------------------------------------------
  LOGGED CRITICAL KINEMATIC EVENTS
 ------------------------------------------------------------------------
