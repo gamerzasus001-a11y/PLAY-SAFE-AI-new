@@ -9,6 +9,7 @@ Features:
 - WIKIPEDIA INTEGRATION: Clickable medical links for non-clinical users.
 - TEMPORAL SMOOTHING: Debouncing to eliminate AI hallucinations.
 - VISUAL EVIDENCE CAPTURE: Snaps photos of faults and embeds them.
+- GEMINI AI: Expert cloud biomechanics analysis added to the final report.
 """
 
 import argparse
@@ -23,6 +24,10 @@ from typing import Dict, List, Optional, Tuple, Set, Any
 
 import cv2
 import numpy as np
+
+# Bridge to your Gemini Cloud logic in the root folder
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from gemini_analyzer import get_gemini_coach_insight
 
 try:
     import mediapipe as mp
@@ -88,7 +93,6 @@ FAULT_LANDMARK_MAP = {
     "Hazardous Bending (Stoop Lift)": [LEFT_SHOULDER, LEFT_HIP, LEFT_KNEE, RIGHT_SHOULDER, RIGHT_HIP, RIGHT_KNEE]
 }
 
-# WIKIPEDIA INTEGRATED DATABASE
 FAULT_DETAILS = {
     "Lateral Head Tilt": {"meaning": "Head leaning to one side.", "fix": "Keep gaze level.", "injury": "Cervical Strain", "url": "https://en.wikipedia.org/wiki/Neck_pain"},
     "Forward Neck Posture": {"meaning": "Head jutting forward past shoulders.", "fix": "Tuck chin, pull head back.", "injury": "Forward Head Posture", "url": "https://en.wikipedia.org/wiki/Forward_head_posture"},
@@ -299,7 +303,7 @@ class MovementAnalyzer:
         if fault not in self.snapshot_evidence: self.snapshot_evidence[fault] = []
         self.snapshot_evidence[fault].append((current_time_sec, b64_img))
 
-    def print_final_report(self, duration_sec: float, source_name: str) -> None:
+    def print_final_report(self, duration_sec: float, source_name: str, gemini_summary: str = "") -> None:
         avg_fps = (self.total_frames_processed / duration_sec) if duration_sec > 0 else 0.0
         sys_acc = (self.global_confidence_sum / self.total_frames_processed) if self.total_frames_processed else 0.0
 
@@ -321,13 +325,26 @@ class MovementAnalyzer:
                 .snapshot-container {{ display: flex; gap: 15px; overflow-x: auto; padding: 10px 0; margin-top: 15px; border-top: 1px dashed #30363d; }}
                 .snapshot-item {{ flex: 0 0 auto; text-align: center; }}
                 .snapshot-img {{ height: 250px; border-radius: 8px; border: 2px solid #ff7b72; box-shadow: 0 0 10px rgba(255,123,114,0.3); }}
+                .gemini-box {{ background-color: #1f1f2e; border: 1px solid #a855f7; padding: 20px; border-radius: 8px; margin-bottom: 30px; border-left: 5px solid #a855f7; }}
+                .gemini-box h2 {{ color: #c084fc; margin-top: 0; border: none; padding-bottom: 0; }}
             </style>
         </head>
         <body>
             <h1>PlaySafe AI : Visual Post-Session Report</h1>
             <p><strong>Source Video:</strong> {source_name} &nbsp;|&nbsp; <strong>AI Confidence Score:</strong> {sys_acc:.1f}%</p>
-            <h2>Detected Biomechanical Faults (With Photo Evidence)</h2>
         """
+        
+        # Inject Gemini AI Report Block if available
+        if gemini_summary:
+            html += f"""
+            <div class="gemini-box">
+                <h2>✨ Extra AI Coach Analysis (Gemini Flash)</h2>
+                <p style="font-size: 1.1em; line-height: 1.7; color: #e2e8f0;">{gemini_summary.replace('\n', '<br>')}</p>
+            </div>
+            """
+
+        html += "<h2>Detected Biomechanical Faults (With Photo Evidence)</h2>"
+        
         if self.detected_form_faults:
             for fault in self.detected_form_faults:
                 details = FAULT_DETAILS.get(fault, {"meaning": "Unknown", "fix": "Unknown", "injury": "Unknown", "url": "#"})
@@ -349,6 +366,7 @@ class MovementAnalyzer:
                 """
         else:
             html += "<div class='card'><p style='color:#3fb950;'>✅ Excellent form! No biomechanical faults detected.</p></div>"
+            
         html += "<h2>Range of Motion (ROM)</h2><table><tr><th>Joint</th><th>Min</th><th>Max</th><th>Avg</th></tr>"
         for name, st in self.joint_stats.items():
             if st["count"] > 0: html += f"<tr><td>{name}</td><td>{int(st['min'])}&deg;</td><td>{int(st['max'])}&deg;</td><td>{int(st['sum']/st['count'])}&deg;</td></tr>"
@@ -386,17 +404,13 @@ class UIDrawer:
 
     @staticmethod
     def add_tech_overlays(frame: np.ndarray, time_sec: float) -> np.ndarray:
-        """ Adds a futuristic tactical grid and a scanning laser to the camera feed """
         h, w = frame.shape[:2]
-        # Tactical Grid
         for i in range(0, w, 60): cv2.line(frame, (i, 0), (i, h), (40, 50, 40), 1)
         for i in range(0, h, 60): cv2.line(frame, (0, i), (w, i), (40, 50, 40), 1)
         
-        # Dynamic Scanning Laser
         scan_y = int(((math.sin(time_sec * 2.5) + 1) / 2) * h)
         cv2.line(frame, (0, scan_y), (w, scan_y), UIDrawer.NEON_CYAN, 1)
         
-        # Corner Brackets
         L, T = 30, 3
         cv2.line(frame, (10, 10), (10+L, 10), UIDrawer.NEON_CYAN, T)
         cv2.line(frame, (10, 10), (10, 10+L), UIDrawer.NEON_CYAN, T)
@@ -416,18 +430,15 @@ class UIDrawer:
         px = lambda lm: (int(lm.x * w), int(lm.y * h))
         base_color = UIDrawer.CRIMSON_RED if "CRITICAL" in state else UIDrawer.NEON_CYAN
 
-        # Create the "Bloom" / Holographic Glow Effect
         overlay = np.zeros_like(frame)
         for idx_a, idx_b in POSE_CONNECTIONS:
             lm_a, lm_b = get_landmark(landmarks, idx_a), get_landmark(landmarks, idx_b)
             if is_landmark_reliable(lm_a) and is_landmark_reliable(lm_b):
                 cv2.line(overlay, px(lm_a), px(lm_b), base_color, 8, cv2.LINE_AA)
         
-        # Blur the overlay to make it glow, then blend it with the frame
         blur = cv2.GaussianBlur(overlay, (21, 21), 0)
         frame = cv2.addWeighted(frame, 1.0, blur, 0.8, 0)
 
-        # Draw the crisp core skeleton on top
         for idx_a, idx_b in POSE_CONNECTIONS:
             lm_a, lm_b = get_landmark(landmarks, idx_a), get_landmark(landmarks, idx_b)
             if is_landmark_reliable(lm_a) and is_landmark_reliable(lm_b):
@@ -445,11 +456,9 @@ class UIDrawer:
         panel_w = 480
         canvas = np.full((h, w + panel_w, 3), UIDrawer.DARK_BG, dtype=np.uint8)
         
-        # Add tech grid and scanlines to the video
         frame = UIDrawer.add_tech_overlays(frame, time_sec)
         canvas[:, :w] = frame
         
-        # Divider Line
         cv2.line(canvas, (w, 0), (w, h), UIDrawer.NEON_CYAN, 2)
         x0, y = w + 25, 40
 
@@ -465,12 +474,10 @@ class UIDrawer:
             cv2.line(canvas, (x0, y + 8), (x0 + panel_w - 50, y + 8), UIDrawer.NEON_CYAN, 1)
             y += 35
 
-        # HUD HEADER
         cv2.putText(canvas, "PLAYSAFE OS v10", (x0, y), cv2.FONT_HERSHEY_DUPLEX, 0.8, UIDrawer.NEON_CYAN, 2, cv2.LINE_AA)
         y += 35
         text(f"UPLINK FPS : {fps:.1f}  |  TIME: {time_sec:.1f}s", (180, 180, 180))
 
-        # DYNAMIC CONFIDENCE BAR
         y += 10
         cv2.putText(canvas, "SYS CONFIDENCE:", (x0, y), cv2.FONT_HERSHEY_DUPLEX, 0.45, UIDrawer.WHITE_GLOW, 1, cv2.LINE_AA)
         conf = analyzer.current_confidence
@@ -481,7 +488,6 @@ class UIDrawer:
         cv2.putText(canvas, f"{conf:.1f}%", (x0 + 150 + bar_w + 10, y), cv2.FONT_HERSHEY_DUPLEX, 0.45, bar_c, 1)
         y += 40
 
-        # KINEMATIC STATE
         section_header("CORE KINEMATIC STATE")
         fall_stat = analyzer.fall_status(time_sec)
         bar_color = UIDrawer.CRIMSON_RED if "CRITICAL" in fall_stat else (UIDrawer.NEON_CYAN if "WARNING" in fall_stat else UIDrawer.NEON_GREEN)
@@ -489,7 +495,6 @@ class UIDrawer:
         cv2.putText(canvas, f"> {fall_stat} <", (x0 + 15, y + 21), cv2.FONT_HERSHEY_DUPLEX, 0.6, bar_color, 1, cv2.LINE_AA)
         y += 60
 
-        # LIVE TELEMETRY
         section_header("LIVE SPATIAL TELEMETRY")
         for part in ["Shoulder", "Elbow", "Wrist", "Hip", "Knee", "Ankle"]:
             l_hist = analyzer.angle_history.get(f"Left {part}", [])
@@ -499,7 +504,6 @@ class UIDrawer:
             text(f"DATALINK [{part.upper():<10}] L: {l_str}  R: {r_str}", UIDrawer.WHITE_GLOW, 0.45)
         y += 15
 
-        # ACTIVE FORM CORRECTIONS
         section_header("ACTIVE FORM ANALYSIS")
         if analyzer.active_faults:
             for fault in analyzer.active_faults:
@@ -525,6 +529,16 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
         print("ERROR: Could not open video source.")
         sys.exit(1)
 
+    fps_source = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    
+    record_path = "session_capture.mp4" if not video_path else video_path
+    out = None
+    if not video_path: 
+        out = cv2.VideoWriter(record_path, fourcc, fps_source, (width, height))
+
     options = mp_vision.PoseLandmarkerOptions(
         base_options=mp_python.BaseOptions(model_asset_path=model_path),
         running_mode=mp_vision.RunningMode.VIDEO,
@@ -542,7 +556,6 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
     frame_idx, display_fps = 0, 0.0
     start_time = time.time()
     prev_time = start_time
-    fps_source = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
     print("PlaySafe OS running. Press Q to quit.")
 
@@ -551,6 +564,9 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
             ok, frame = cap.read()
             if not ok or frame is None: break
             if not video_path: frame = cv2.flip(frame, 1)
+            
+            if out and not video_path:
+                out.write(frame)
 
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
@@ -587,17 +603,24 @@ def run_engine(model_path: str, video_path: Optional[str] = None, camera_index: 
 
     total_duration = time.time() - start_time
     cap.release()
+    if out: out.release()
     cv2.destroyAllWindows()
     
-    analyzer.print_final_report(total_duration, source_desc)
-
+    print("\n>> Local Edge processing complete.")
+    print(">> Reaching out to Gemini AI for expert coaching analysis...")
+    gemini_summary = get_gemini_coach_insight(record_path)
+    
+    analyzer.print_final_report(total_duration, source_desc, gemini_summary)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PlaySafe AI Kinematics Engine")
     parser.add_argument("--video", type=str, default=None, help="Path to video file")
-    parser.add_argument("--model", type=str, default="pose_landmarker_full.task", help="Path to model")
+    
+    # Defaults to the Heavy model for highest accuracy
+    parser.add_argument("--model", type=str, default="pose_landmarker_heavy.task", help="Path to model")
+    
     parser.add_argument("--camera", type=int, default=0, help="Webcam index")
     
     args = parser.parse_args()
-    model_loc = args.model if os.path.isfile(args.model) else os.path.join(os.path.dirname(__file__), "pose_landmarker_full.task")
+    model_loc = args.model if os.path.isfile(args.model) else os.path.join(os.path.dirname(__file__), "pose_landmarker_heavy.task")
     run_engine(model_loc, args.video, args.camera)
